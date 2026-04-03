@@ -135,10 +135,15 @@ pm2 restart dallyeori --update-env
 
 ## 다음 단계: 2-C QR 캐주얼 대전
 
-- 네이티브 앱 유저가 QR 생성 → 상대 스캔 → PWA로 가입 없이 바로 경주
-- MONO의 QR+PWA 구조 활용
-- duck.lingora.chat:3100 기반으로 구현
-- 프롬프트: cursor-prompt-phase6-step2.md 참고
+### ✅ 2-C 구현됨 (레포 반영)
+- 서버: `POST /api/qr-match/create`, `GET /qr/:matchCode` 리다이렉트, 게스트 JWT + Socket 자동 조인, `pairQrRoom`
+- 클라이언트: 로비 `QR 대전`, `qrcode`로 이미지, `?qr=&t=` 게스트 부트, 결과 화면 앱 유도
+- STAGING: `.env`에 `QR_CLIENT_BASE_URL` — QR이 열 **프론트** 베이스 URL (예: 정적 호스트). 비우면 `CLIENT_ORIGIN`
+- `cursor-prompt-phase6-step2.md`는 워크스페이스에 없어 초기 2-C 스펙으로 구현함
+
+### 이후 아이디어
+- 호스트 30초 만료 시 하트 환불 여부 정책
+- QR 전용 지형 선택 UI
 
 ---
 

@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { randomInt, randomUUID } from 'crypto';
 
 function secret() {
   const s = process.env.JWT_SECRET;
@@ -26,7 +27,28 @@ export function signSessionToken(payload) {
  * @param {string} token
  */
 export function verifySessionToken(token) {
-  return /** @type {jwt.JwtPayload & { uid: string, displayName?: string, email?: string, photoURL?: string }} */ (
+  return /** @type {jwt.JwtPayload & { uid: string, displayName?: string, email?: string, photoURL?: string, qrGuest?: boolean, qrMatchCode?: string }} */ (
     jwt.verify(token, secret())
+  );
+}
+
+/**
+ * QR 스캔 게스트용 짧은 수명 JWT (같은 secret으로 검증)
+ * @param {string} matchCode
+ */
+export function signQrGuestToken(matchCode) {
+  const uid = `guest:${randomUUID()}`;
+  const displayName = `게스트_${randomInt(100, 999)}`;
+  return jwt.sign(
+    {
+      uid,
+      displayName,
+      email: '',
+      photoURL: '',
+      qrGuest: true,
+      qrMatchCode: matchCode,
+    },
+    secret(),
+    { expiresIn: '1h' },
   );
 }

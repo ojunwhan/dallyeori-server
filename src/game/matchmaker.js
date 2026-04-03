@@ -114,12 +114,14 @@ export class Matchmaker {
       roomId,
       slot: 0,
       terrain: normalizeTerrainKey(terrain),
+      myDuckId: pa.profile.duckId || 'bori',
       opponent: profileToOpponent(pb.profile),
     });
     b.socket.emit('matchFound', {
       roomId,
       slot: 1,
       terrain: normalizeTerrainKey(terrain),
+      myDuckId: pb.profile.duckId || 'bori',
       opponent: profileToOpponent(pa.profile),
     });
   }
@@ -141,7 +143,40 @@ export class Matchmaker {
       roomId,
       slot: 0,
       terrain: normalizeTerrainKey(terrain),
+      myDuckId: pa.profile.duckId || 'bori',
       opponent: profileToOpponent(pb.profile),
+    });
+  }
+
+  /**
+   * QR 매치: 호스트·게스트 소켓이 이미 연결된 상태에서 방만 생성
+   * @param {string} terrain
+   * @param {QueueEntry} hostEntry
+   * @param {QueueEntry} guestEntry
+   */
+  pairQrRoom(terrain, hostEntry, guestEntry) {
+    const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const pa = { ...hostEntry, slot: 0, isBot: false };
+    const pb = { ...guestEntry, slot: 1, isBot: false };
+    const room = new RaceRoom(this.io, roomId, pa, pb, terrain);
+    this.rooms.set(roomId, room);
+    this.socketRoom.set(hostEntry.socket.id, roomId);
+    this.socketRoom.set(guestEntry.socket.id, roomId);
+    room.attachSocket(hostEntry.socket);
+    room.attachSocket(guestEntry.socket);
+    hostEntry.socket.emit('matchFound', {
+      roomId,
+      slot: 0,
+      terrain: normalizeTerrainKey(terrain),
+      myDuckId: pa.profile.duckId || 'bori',
+      opponent: profileToOpponent(pb.profile),
+    });
+    guestEntry.socket.emit('matchFound', {
+      roomId,
+      slot: 1,
+      terrain: normalizeTerrainKey(terrain),
+      myDuckId: pb.profile.duckId || 'bori',
+      opponent: profileToOpponent(pa.profile),
     });
   }
 

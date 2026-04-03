@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import authRoutes from './auth/index.js';
 import { verifySessionToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
+import { QrMatchManager } from './game/qrMatch.js';
 
 const PORT = Number(process.env.PORT) || 3100;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
@@ -30,6 +31,31 @@ const io = new Server(httpServer, {
 });
 
 const matchmaker = new Matchmaker(io);
+const qrMatch = new QrMatchManager(io, matchmaker);
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+function requireUserJwt(req, res, next) {
+  const h = req.headers.authorization;
+  if (!h?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  try {
+    const p = verifySessionToken(h.slice(7));
+    if (p.qrGuest) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    req.authUser = p;
+    next();
+  } catch {
+    res.status(401).json({ error: 'unauthorized' });
+  }
+}
 
 io.use((socket, next) => {
   try {
@@ -42,6 +68,9 @@ io.use((socket, next) => {
     socket.data.uid = payload.uid;
     socket.data.displayName = payload.displayName ?? '';
     socket.data.email = payload.email ?? '';
+    socket.data.photoURL = payload.photoURL ?? '';
+    socket.data.qrGuest = Boolean(payload.qrGuest);
+    socket.data.qrMatchCode = payload.qrMatchCode || '';
     next();
   } catch {
     next(new Error('unauthorized'));
@@ -49,7 +78,12 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  if (socket.data.qrGuest) {
+    queueMicrotask(() => qrMatch.tryJoinGuest(socket));
+  }
+
   socket.on('findMatch', (payload) => {
+    if (socket.data.qrGuest) return;
     const terrain = payload?.terrain || 'normal';
     const profile = payload?.profile || {};
     matchmaker.enqueue(socket, terrain, {
@@ -64,7 +98,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('cancelMatch', () => {
+    qrMatch.cancelForSocket(socket.id);
     matchmaker.cancel(socket.id);
+  });
+
+  socket.on('qrMatchCancel', () => {
+    qrMatch.cancelForSocket(socket.id);
   });
 
   socket.on('raceJoin', (payload) => {
@@ -99,7 +138,7 @@ io.on('connection', (socket) => {
     }
     const slot = payload?.slot;
     if (slot !== 0 && slot !== 1) {
-      console.log('[server] tap ignored: bad slot', socket.id, slot);
+      console.log('[server] tap ignored: bad slot', socket.id, payload);
       return;
     }
     console.log('[server] tap from', socket.id, payload);
@@ -107,12 +146,48 @@ io.on('connection', (socket) => {
   });
 
   socket.on('requestRematch', () => {
+    if (socket.data.qrGuest) return;
     socket.emit('rematchRequest', { from: socket.data.uid });
   });
 
   socket.on('disconnect', () => {
+    qrMatch.onDisconnect(socket);
     matchmaker.cancel(socket.id);
   });
+});
+
+app.post('/api/qr-match/create', requireUserJwt, (req, res) => {
+  const r = qrMatch.createPending(req.authUser, req.body);
+  if (!r.ok) {
+    res.status(r.status).json({ error: r.error });
+    return;
+  }
+  res.json({
+    matchCode: r.matchCode,
+    qrUrl: r.qrUrl,
+    guestToken: r.guestToken,
+  });
+});
+
+app.get('/qr/:matchCode', (req, res) => {
+  const { matchCode } = req.params;
+  const t = req.query.t;
+  if (!t || typeof t !== 'string') {
+    res.status(400).send('missing token');
+    return;
+  }
+  try {
+    const p = verifySessionToken(t);
+    if (!p.qrGuest || String(p.qrMatchCode) !== matchCode) {
+      res.status(403).send('invalid token');
+      return;
+    }
+  } catch {
+    res.status(403).send('invalid token');
+    return;
+  }
+  const base = qrMatch.qrClientBaseUrl();
+  res.redirect(302, `${base}/?qr=${encodeURIComponent(matchCode)}&t=${encodeURIComponent(t)}`);
 });
 
 app.get('/health', (_req, res) => {
