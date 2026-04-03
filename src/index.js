@@ -167,6 +167,31 @@ io.on('connection', (socket) => {
     socket.emit('rematchRequest', { from: socket.data.uid });
   });
 
+  // ──── 채팅 (기존 핸들러 아래에 추가) ────
+  socket.on('sendChat', (payload) => {
+    if (!payload || typeof payload.toUid !== 'string' || typeof payload.text !== 'string') return;
+    const fromUid = socket.data.uid;
+    if (!fromUid) return;
+    const msg = {
+      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      fromId: fromUid,
+      toId: payload.toUid,
+      text: String(payload.text).slice(0, 2000),
+      originalText: String(payload.text).slice(0, 2000),
+      translatedText: payload.translatedText ? String(payload.translatedText).slice(0, 2000) : undefined,
+      ts: Date.now(),
+    };
+    // 상대방 소켓 찾기 (온라인이면 전달)
+    for (const [, s] of io.sockets.sockets) {
+      if (s.data?.uid === payload.toUid && s.id !== socket.id) {
+        s.emit('receiveChat', msg);
+        break;
+      }
+    }
+    // 보낸 사람에게도 확인 (localStorage 동기화용)
+    socket.emit('chatSent', msg);
+  });
+
   socket.on('disconnect', () => {
     qrMatch.onDisconnect(socket);
     matchmaker.cancel(socket.id);
