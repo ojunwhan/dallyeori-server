@@ -1,17 +1,14 @@
 import { Router } from 'express';
 import axios from 'axios';
+import { publicAppOrigin } from './oauthOrigin.js';
 import { signSessionToken } from './session.js';
 
 const router = Router();
 
-function clientOrigin() {
-  return process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-}
-
 router.get('/google', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
-  const redirectUri = process.env.GOOGLE_CALLBACK_URL;
-  if (!clientId || !redirectUri) {
+  const redirectUri = `${publicAppOrigin(req)}/api/auth/google/callback`;
+  if (!clientId) {
     res.status(500).send('Google OAuth is not configured');
     return;
   }
@@ -35,8 +32,8 @@ router.get('/google/callback', async (req, res) => {
   }
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_CALLBACK_URL;
-  if (!clientId || !clientSecret || !redirectUri) {
+  const redirectUri = `${publicAppOrigin(req)}/api/auth/google/callback`;
+  if (!clientId || !clientSecret) {
     res.status(500).send('Google OAuth is not configured');
     return;
   }
@@ -73,7 +70,7 @@ router.get('/google/callback', async (req, res) => {
       photoURL: u.picture ?? '',
     });
     const frag = `dallyeori_token=${encodeURIComponent(jwtToken)}`;
-    res.redirect(`${clientOrigin()}/#${frag}`);
+    res.redirect(`${publicAppOrigin(req)}/#${frag}`);
   } catch (e) {
     console.error('[auth/google/callback]', e?.response?.data ?? e);
     res.status(502).send('Google login failed');

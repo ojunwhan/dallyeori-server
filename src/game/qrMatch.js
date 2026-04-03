@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { signQrGuestToken } from '../auth/session.js';
 import { normalizeTerrainKey } from './physics.js';
 
-const QR_PENDING_MS = 30_000;
+const QR_PENDING_MS = 180_000;
 const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 /** @param {number} len */
@@ -28,8 +28,8 @@ export class QrMatchManager {
   }
 
   qrClientBaseUrl() {
-    const b = process.env.QR_CLIENT_BASE_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-    return String(b).replace(/\/$/, '');
+    const raw = process.env.QR_CLIENT_BASE_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+    return String(raw).split(',')[0].trim().replace(/\/$/, '');
   }
 
   /** @param {string} uid */

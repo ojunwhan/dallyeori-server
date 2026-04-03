@@ -9,12 +9,29 @@ import { Matchmaker } from './game/matchmaker.js';
 import { QrMatchManager } from './game/qrMatch.js';
 
 const PORT = Number(process.env.PORT) || 3100;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+/** @returns {string[]} */
+function parseAllowedOrigins() {
+  const raw = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+  return raw.split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+}
+
+const allowedOrigins = parseAllowedOrigins();
 
 const app = express();
 app.use(
   cors({
-    origin: CLIENT_ORIGIN,
+    origin(origin, cb) {
+      if (!origin) {
+        cb(null, true);
+        return;
+      }
+      if (allowedOrigins.includes(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
+    },
     credentials: true,
   }),
 );
@@ -24,7 +41,7 @@ app.use('/api/auth', authRoutes);
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: CLIENT_ORIGIN,
+    origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },

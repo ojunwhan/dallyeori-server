@@ -1,17 +1,14 @@
 import { Router } from 'express';
 import axios from 'axios';
+import { publicAppOrigin } from './oauthOrigin.js';
 import { signSessionToken } from './session.js';
 
 const router = Router();
 
-function clientOrigin() {
-  return process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-}
-
 router.get('/kakao', (req, res) => {
   const clientId = process.env.KAKAO_CLIENT_ID;
-  const redirectUri = process.env.KAKAO_CALLBACK_URL;
-  if (!clientId || !redirectUri) {
+  const redirectUri = `${publicAppOrigin(req)}/api/auth/kakao/callback`;
+  if (!clientId) {
     res.status(500).send('Kakao OAuth is not configured');
     return;
   }
@@ -31,8 +28,8 @@ router.get('/kakao/callback', async (req, res) => {
   }
   const clientId = process.env.KAKAO_CLIENT_ID;
   const clientSecret = process.env.KAKAO_CLIENT_SECRET;
-  const redirectUri = process.env.KAKAO_CALLBACK_URL;
-  if (!clientId || !clientSecret || !redirectUri) {
+  const redirectUri = `${publicAppOrigin(req)}/api/auth/kakao/callback`;
+  if (!clientId || !clientSecret) {
     res.status(500).send('Kakao OAuth is not configured');
     return;
   }
@@ -113,7 +110,7 @@ router.get('/kakao/callback', async (req, res) => {
       photoURL: prof.profile_image_url ?? prof.thumbnail_image_url ?? '',
     });
     const frag = `dallyeori_token=${encodeURIComponent(jwtToken)}`;
-    res.redirect(`${clientOrigin()}/#${frag}`);
+    res.redirect(`${publicAppOrigin(req)}/#${frag}`);
     console.log('[auth/kakao/callback] JWT issued, redirect to client');
   } catch (e) {
     console.error('[auth/kakao/callback] JWT/sign or redirect FAILED:', e?.message, e?.stack);

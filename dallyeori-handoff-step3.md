@@ -2,6 +2,45 @@
 
 ---
 
+## 인프라 변경 (2026-04-03) — 반영됨
+
+### 도메인
+- **dallyeori.com** — Cloudflare Registrar, DNS A `@` / `www` → `43.201.103.166` (**Proxied**)
+- **SSL:** Cloudflare **Flexible** (브라우저↔CF HTTPS, CF↔오리진 HTTP)
+- **duck.lingora.chat** — 유지 (백도어·개발용 접근)
+
+### 클라이언트
+- GitHub: `https://github.com/ojunwhan/dallyeori.git`
+- 빌드: 로컬 `npm run build` → 레포에 `dist` 포함 또는 서버에서 pull 후 빌드
+- **정적 파일 배포 경로 (STAGING nginx root):** `/var/www/dallyeori/`  
+  (`/home/ubuntu/dallyeori-client` 아님 — www-data 권한)
+
+### nginx
+- 파일: `/etc/nginx/sites-available/duck.lingora.chat` (이름은 기존 유지 가능)
+- `server_name duck.lingora.chat dallyeori.com www.dallyeori.com;`
+- `root /var/www/dallyeori;`
+- 레포 템플릿: `dallyeori-server/deploy/nginx-dallyeori-frontend.conf`
+
+### 서버 `.env` (값은 서버·콘솔에서만 관리, 레포에 시크릿 커밋 금지)
+- `CLIENT_ORIGIN=https://dallyeori.com,https://duck.lingora.chat` — **콤마 구분** CORS (코드 반영됨)
+- Google: **DALLYEORI 전용** OAuth 클라이언트 (MONO와 분리). 콘솔에 JS 원본·리디렉션 URI를 **dallyeori.com + duck.lingora.chat** 각각 등록
+- 카카오: 기존 앱에 `https://dallyeori.com/api/auth/kakao/callback` 등 필요 URI 추가
+- **리디렉트 URI:** 런타임에 `X-Forwarded-Proto` + `Host`로 조합 (`src/auth/oauthOrigin.js`). 콘솔 등록만 맞추면 됨.
+
+### 클라이언트 `.env.production`
+- `VITE_API_BASE_URL`, `VITE_SOCKET_URL` — **빈 값 유지** (동일 출처)
+
+### 배포 (서버 예시)
+```bash
+cd ~/dallyeori   # 클라이언트 클론 경로
+git pull
+npm ci
+npm run build
+sudo cp -r dist/* /var/www/dallyeori/
+```
+
+---
+
 ## 완료 상태 요약
 
 ### ✅ 1단계 완료
@@ -17,7 +56,7 @@
 
 ### ✅ 2-B 완료: AWS STAGING 배포
 - dallyeori-server가 STAGING에서 동작 중
-- 외부 접근 확인됨: http://duck.lingora.chat:3100/health → {"ok":true}
+- 공개 도메인: **https://dallyeori.com** (및 duck.lingora.chat)
 
 ### ⬜ 아직 모킹인 것
 - db.js 전체 (전적, 하트, 친구, 채팅, 랭킹) — localStorage 모킹
@@ -32,66 +71,47 @@
 |------|-----|
 | 인스턴스 | Ubuntu-staging (Lightsail) |
 | 퍼블릭 IP | 43.201.103.166 |
-| 도메인 | **duck.lingora.chat** |
-| SSH | 브라우저 터미널 (Lightsail 콘솔) |
-| OS | Ubuntu 24.04.4 LTS |
-| Node | v20.20.0 |
-| Git | 2.43.0 |
+| 공식 도메인 | **dallyeori.com**, **www.dallyeori.com** |
+| 보조 도메인 | **duck.lingora.chat** |
+| SSH | Lightsail 콘솔 등 |
+| OS | Ubuntu 24.04.x |
+| Node | v20.x |
+| Cloudflare | Registrar + Proxy, SSL Flexible |
 
 ### PM2 프로세스
-| id | name | port | 비고 |
-|----|------|------|------|
-| 0 | mono | 3174 | MONO 서비스 — 절대 건드리지 마 |
-| 1 | dallyeori | 3100 | 달려오리 게임 서버 |
+| name | port | 비고 |
+|------|------|------|
+| mono | 3174 | MONO — **절대 건드리지 마** |
+| dallyeori | 3100 | 달려오리 게임 서버 |
 
 ### 코드 위치
 - 서버: `/home/ubuntu/dallyeori-server/`
-- GitHub: `https://github.com/ojunwhan/dallyeori-server.git` (Public)
+- GitHub 서버: `https://github.com/ojunwhan/dallyeori-server.git`
+- GitHub 클라이언트: `https://github.com/ojunwhan/dallyeori.git`
 
-### .env (STAGING)
+### .env (STAGING) — 예시 형태만 (실제 시크릿은 서버에만)
 ```
 PORT=3100
-CLIENT_ORIGIN=http://duck.lingora.chat:3100
-GOOGLE_CLIENT_ID=<Google Cloud>
-GOOGLE_CLIENT_SECRET=<Google Cloud>
-GOOGLE_CALLBACK_URL=http://duck.lingora.chat:3100/api/auth/google/callback
-KAKAO_CLIENT_ID=<Kakao Developers>
-KAKAO_CLIENT_SECRET=<Kakao Developers>
-KAKAO_CALLBACK_URL=http://duck.lingora.chat:3100/api/auth/kakao/callback
+CLIENT_ORIGIN=https://dallyeori.com,https://duck.lingora.chat
+GOOGLE_CLIENT_ID=<DALLYEORI 전용>
+GOOGLE_CLIENT_SECRET=<비밀>
+KAKAO_CLIENT_ID=<기존>
+KAKAO_CLIENT_SECRET=<기존>
 JWT_SECRET=<openssl rand -hex 32>
-QR_CLIENT_BASE_URL=<QR 스캔 시 열릴 프론트 베이스 URL; 비우면 CLIENT_ORIGIN>
+QR_CLIENT_BASE_URL=https://dallyeori.com
 ```
 
-### Lightsail 방화벽 (STAGING)
-| Application | Protocol | Port | Restricted to |
-|------------|----------|------|---------------|
-| SSH | TCP | 22 | Any IPv4 |
-| HTTP | TCP | 80 | Any IPv4 |
-| HTTPS | TCP | 443 | Any IPv4 |
-| Custom | TCP | 3100 | Any IPv4 |
-
-### DNS (Cloudflare)
-- `duck.lingora.chat` → A → 43.201.103.166 (DNS only, 프록시 OFF)
-
-### OAuth 콜백 URL (등록 완료)
-**Google Cloud Console:**
-- 승인된 JavaScript 원본: `http://duck.lingora.chat:3100`
-- 승인된 리디렉션 URI: `http://duck.lingora.chat:3100/api/auth/google/callback`
-
-**Kakao Developers:**
-- Redirect URI: `http://duck.lingora.chat:3100/api/auth/kakao/callback`
+### Lightsail / 방화벽
+- HTTP 80, HTTPS 443, SSH 22, (선택) 3100
 
 ---
 
-## AWS PROD 환경
+## AWS PROD 환경 (MONO)
 
 | 항목 | 값 |
 |------|-----|
-| 인스턴스 | Ubuntu-2 (Lightsail) |
-| 퍼블릭 IP | 15.164.59.178 |
 | 도메인 | lingora.chat |
 | 용도 | MONO 프로덕션 전용 |
-| GitHub Actions | deploy.yml → feature/hospital-plastic-surgery push 시 자동 배포 |
 
 ---
 
@@ -99,32 +119,25 @@ QR_CLIENT_BASE_URL=<QR 스캔 시 열릴 프론트 베이스 URL; 비우면 CLIE
 
 ```
 로컬:
-C:\Users\USER\Desktop\dallyeori\          ← 클라이언트 (Vanilla JS + Canvas 2D, Vite)
-C:\Users\USER\Desktop\dallyeori\dallyeori-server\  ← 게임 서버
-C:\Users\USER\Desktop\MONO\               ← MONO 번역 서비스 (별도 프로젝트)
+.../dallyeori/           ← 클라이언트 (Vite)
+.../dallyeori-server/    ← 게임 서버
 
-STAGING 서버:
-/home/ubuntu/mono/              ← MONO (PM2: mono, 포트 3174)
-/home/ubuntu/dallyeori-server/  ← 달려오리 (PM2: dallyeori, 포트 3100)
+STAGING:
+/var/www/dallyeori/              ← nginx 정적 (클라이언트 빌드)
+/home/ubuntu/dallyeori-server/   ← PM2 dallyeori
+/home/ubuntu/mono/               ← PM2 mono :3174
 ```
 
-### .env 파일 위치
-- `dallyeori/.env` — 클라이언트 (VITE_* 변수)
-- `dallyeori/dallyeori-server/.env` — 게임 서버 (로컬)
-- `/home/ubuntu/dallyeori-server/.env` — 게임 서버 (STAGING)
-- `MONO/.env` — MONO 서버
-
 ### 포트
-- 5173: Vite dev server (달려오리 클라이언트, 로컬)
-- 3100: dallyeori-server (게임 서버)
-- 3174: MONO 서버
+- 5173: Vite dev (로컬)
+- 3100: dallyeori-server
+- 3174: MONO
 
 ---
 
-## 서버 코드 업데이트 방법 (STAGING)
+## 서버 코드 업데이트 (STAGING)
 
 ```bash
-ssh 접속 후:
 cd ~/dallyeori-server
 git pull
 npm ci --omit=dev
@@ -133,30 +146,25 @@ pm2 restart dallyeori --update-env
 
 ---
 
-## 다음 단계: 2-C QR 캐주얼 대전
+## 2-C QR 캐주얼 대전
 
-### ✅ 2-C 구현됨 (레포 반영)
-- 서버: `POST /api/qr-match/create`, `GET /qr/:matchCode` 리다이렉트, 게스트 JWT + Socket 자동 조인, `pairQrRoom`
-- 클라이언트: 로비 `QR 대전`, `qrcode`로 이미지, `?qr=&t=` 게스트 부트, 결과 화면 앱 유도
-- STAGING: `.env`에 `QR_CLIENT_BASE_URL` — QR이 열 **프론트** 베이스 URL (예: 정적 호스트). 비우면 `CLIENT_ORIGIN`
-- `cursor-prompt-phase6-step2.md`는 워크스페이스에 없어 초기 2-C 스펙으로 구현함
-
-### 이후 아이디어
-- 호스트 30초 만료 시 하트 환불 여부 정책
-- QR 전용 지형 선택 UI
+### ✅ 구현됨
+- 서버: `POST /api/qr-match/create`, `GET /qr/:matchCode`, 게스트 JWT, `pairQrRoom`
+- 클라이언트: QR 대전, 게스트 부트, 결과 앱 유도
+- `QR_CLIENT_BASE_URL` — 보통 `https://dallyeori.com`
 
 ---
 
 ## 핵심 설계 원칙 (절대 변경 금지)
 
-1. 경기장 안 = 100% 순수 손가락 속도. 외부 요소 개입 없음
-2. 하트 = 통합 화폐. 복잡한 구조 배제
-3. 의무 루틴 없음 (먹이주기, 관리 등 피로 유발 요소 전부 배제)
-4. 오리는 날개를 펼치지 않는다 (달려야 한다, 날지 않는다)
+1. 경기장 안 = 100% 순수 손가락 속도
+2. 하트 = 통합 화폐
+3. 의무 루틴 없음
+4. 오리는 날개를 펼치지 않는다
 
 ## 하트 경제 (확정)
 - 경주 1판 = 하트 1개 소모
-- 승리 시 상대 하트 1개 뺏어옴 (실질 무료)
+- 승리 시 상대 하트 1개 뺏어옴
 - 패배 시 하트 1개 잃음
-- 하트 0이면 경주 불가 → 광고/IAP/친구에게 하트 요청으로 충전
-- 친구 하트 구걸 기능 확정 (푸시 알림, 하루 요청 횟수 제한)
+- 하트 0이면 경주 불가
+- 친구 하트 구걸 기능 확정
