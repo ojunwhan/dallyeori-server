@@ -196,10 +196,16 @@ export class RaceRoom {
     const f = foot === 'right' ? 'R' : 'L';
     applyTap(this.ducks[slot], f, this.terrain, this.raceT, {});
     const opp = 1 - slot;
-    this.io.to(this.channel).emit('opponentTap', {
-      fromSlot: slot,
-      foot,
-    });
+    const peerEntry = this.entries[opp];
+    if (peerEntry?.socket && !peerEntry.isBot) {
+      console.log('[server] peerTap emit', {
+        roomId: this.roomId,
+        toSocket: peerEntry.socket.id,
+        slot,
+        foot,
+      });
+      peerEntry.socket.emit('peerTap', { slot, foot });
+    }
   }
 }
 
