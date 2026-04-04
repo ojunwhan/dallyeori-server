@@ -198,13 +198,21 @@ export class RaceRoom {
     const opp = 1 - slot;
     const peerEntry = this.entries[opp];
     if (peerEntry?.socket && !peerEntry.isBot) {
-      console.log('[server] peerTap emit', {
-        roomId: this.roomId,
-        toSocket: peerEntry.socket.id,
-        slot,
-        foot,
-      });
+      console.log('[server] peerTap emit to slot', opp, 'foot', foot);
       peerEntry.socket.emit('peerTap', { slot, foot });
+    } else {
+      console.log('[server] peerTap skip', {
+        oppSlot: opp,
+        foot,
+        entry: peerEntry
+          ? { hasSocket: !!peerEntry.socket, isBot: !!peerEntry.isBot }
+          : null,
+        entries: this.entries.map((e, i) => ({
+          i,
+          hasSocket: !!(e && e.socket),
+          isBot: !!(e && e.isBot),
+        })),
+      });
     }
   }
 }
