@@ -213,11 +213,13 @@ io.on('connection', (socket) => {
               translatedText = data.translated.trim().slice(0, 2000);
             }
           } else {
-            console.warn('[sendChat] translate HTTP', res.status);
+            console.warn('[sendChat] translate HTTP', res.status, { fromLang, toLang });
           }
         } catch (e) {
-          console.warn('[sendChat] translate error', e);
+          console.warn('[sendChat] translate error', e, { fromLang, toLang });
         }
+      } else if (peerSocket) {
+        console.log('[sendChat] same language, skip translate:', socket.data.language);
       }
 
       const msg = {
@@ -229,6 +231,23 @@ io.on('connection', (socket) => {
         translatedText,
         ts: Date.now(),
       };
+
+      console.log('[sendChat]', {
+        from: fromUid,
+        fromLang: socket.data.language,
+        to: payload.toUid,
+        toLang: peerSocket?.data?.language,
+        text: msg.text,
+      });
+
+      if (peerSocket && fromLang !== toLang) {
+        console.log('[sendChat] translated:', {
+          fromLang: socket.data.language,
+          toLang: peerSocket.data.language,
+          original: msg.text,
+          translated: translatedText,
+        });
+      }
 
       if (peerSocket) {
         peerSocket.emit('receiveChat', msg);
