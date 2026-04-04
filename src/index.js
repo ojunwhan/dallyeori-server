@@ -197,7 +197,7 @@ io.on('connection', (socket) => {
       if (peerSocket && fromLang !== toLang) {
         translatedText = undefined;
         try {
-          const res = await fetch('http://127.0.0.1:3174/api/translate', {
+          const res = await fetch('https://lingora.chat/api/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
