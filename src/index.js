@@ -88,6 +88,9 @@ io.use((socket, next) => {
     socket.data.photoURL = payload.photoURL ?? '';
     socket.data.qrGuest = Boolean(payload.qrGuest);
     socket.data.qrMatchCode = payload.qrMatchCode || '';
+    const lang = socket.handshake.auth?.language;
+    socket.data.language =
+      typeof lang === 'string' && lang.trim() ? lang.trim() : 'ko';
     next();
   } catch {
     next(new Error('unauthorized'));
@@ -168,28 +171,72 @@ io.on('connection', (socket) => {
   });
 
   // ──── 채팅 (기존 핸들러 아래에 추가) ────
-  socket.on('sendChat', (payload) => {
-    if (!payload || typeof payload.toUid !== 'string' || typeof payload.text !== 'string') return;
-    const fromUid = socket.data.uid;
-    if (!fromUid) return;
-    const msg = {
-      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      fromId: fromUid,
-      toId: payload.toUid,
-      text: String(payload.text).slice(0, 2000),
-      originalText: String(payload.text).slice(0, 2000),
-      translatedText: payload.translatedText ? String(payload.translatedText).slice(0, 2000) : undefined,
-      ts: Date.now(),
-    };
-    // 상대방 소켓 찾기 (온라인이면 전달)
-    for (const [, s] of io.sockets.sockets) {
-      if (s.data?.uid === payload.toUid && s.id !== socket.id) {
-        s.emit('receiveChat', msg);
-        break;
+  socket.on('sendChat', async (payload) => {
+    try {
+      if (!payload || typeof payload.toUid !== 'string' || typeof payload.text !== 'string') return;
+      const fromUid = socket.data.uid;
+      if (!fromUid) return;
+
+      /** @type {import('socket.io').Socket | null} */
+      let peerSocket = null;
+      for (const [, s] of io.sockets.sockets) {
+        if (s.data?.uid === payload.toUid && s.id !== socket.id) {
+          peerSocket = s;
+          break;
+        }
       }
+
+      const fromLang = socket.data.language || 'ko';
+      const toLang = peerSocket?.data?.language || 'ko';
+      const textSlice = String(payload.text).slice(0, 2000);
+
+      let translatedText = payload.translatedText
+        ? String(payload.translatedText).slice(0, 2000)
+        : undefined;
+
+      if (peerSocket && fromLang !== toLang) {
+        translatedText = undefined;
+        try {
+          const res = await fetch('http://127.0.0.1:3174/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: textSlice,
+              fromLang,
+              toLang,
+              tone: 'casual',
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && typeof data.translated === 'string' && data.translated.trim()) {
+              translatedText = data.translated.trim().slice(0, 2000);
+            }
+          } else {
+            console.warn('[sendChat] translate HTTP', res.status);
+          }
+        } catch (e) {
+          console.warn('[sendChat] translate error', e);
+        }
+      }
+
+      const msg = {
+        id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        fromId: fromUid,
+        toId: payload.toUid,
+        text: textSlice,
+        originalText: textSlice,
+        translatedText,
+        ts: Date.now(),
+      };
+
+      if (peerSocket) {
+        peerSocket.emit('receiveChat', msg);
+      }
+      socket.emit('chatSent', msg);
+    } catch (e) {
+      console.warn('[sendChat] handler error', e);
     }
-    // 보낸 사람에게도 확인 (localStorage 동기화용)
-    socket.emit('chatSent', msg);
   });
 
   socket.on('disconnect', () => {
