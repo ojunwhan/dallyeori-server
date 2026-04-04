@@ -2,6 +2,7 @@ import { Router } from 'express';
 import axios from 'axios';
 import { publicAppOrigin } from './oauthOrigin.js';
 import { signSessionToken } from './session.js';
+import { ensureAuthUser } from './userStore.js';
 
 const router = Router();
 
@@ -63,11 +64,16 @@ router.get('/google/callback', async (req, res) => {
       res.status(502).send('Invalid userinfo');
       return;
     }
+    const uidFull = `google:${uid}`;
+    const { record } = ensureAuthUser(uidFull);
+    const isNewUser = !record.profileSetupComplete;
+    console.log('[google auth] dallyeori-only store — isNewUser:', isNewUser, 'uid:', uidFull);
     const jwtToken = signSessionToken({
-      uid: `google:${uid}`,
+      uid: uidFull,
       displayName: u.name ?? u.given_name ?? '',
       email: u.email ?? '',
       photoURL: u.picture ?? '',
+      isNewUser,
     });
     const frag = `dallyeori_token=${encodeURIComponent(jwtToken)}`;
     res.redirect(`${publicAppOrigin(req)}/#${frag}`);

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import axios from 'axios';
 import { publicAppOrigin } from './oauthOrigin.js';
 import { signSessionToken } from './session.js';
+import { ensureAuthUser } from './userStore.js';
 
 const router = Router();
 
@@ -103,11 +104,16 @@ router.get('/kakao/callback', async (req, res) => {
   try {
     const acct = k.kakao_account ?? {};
     const prof = acct.profile ?? {};
+    const uidFull = `kakao:${id}`;
+    const { record } = ensureAuthUser(uidFull);
+    const isNewUser = !record.profileSetupComplete;
+    console.log('[kakao auth] dallyeori-only store — isNewUser:', isNewUser, 'uid:', uidFull);
     const jwtToken = signSessionToken({
-      uid: `kakao:${id}`,
+      uid: uidFull,
       displayName: prof.nickname ?? acct.name ?? '',
       email: acct.email ?? '',
       photoURL: prof.profile_image_url ?? prof.thumbnail_image_url ?? '',
+      isNewUser,
     });
     const frag = `dallyeori_token=${encodeURIComponent(jwtToken)}`;
     res.redirect(`${publicAppOrigin(req)}/#${frag}`);

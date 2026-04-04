@@ -8,7 +8,8 @@ function secret() {
 }
 
 /**
- * @param {{ uid: string, displayName: string, email: string, photoURL?: string }} payload
+ * @param {{ uid: string, displayName: string, email: string, photoURL?: string, isNewUser?: boolean }} payload
+ * isNewUser: true → 클라이언트에서 프로필 설정 필요, false → 기가입(로비로)
  */
 export function signSessionToken(payload) {
   return jwt.sign(
@@ -17,6 +18,7 @@ export function signSessionToken(payload) {
       displayName: payload.displayName ?? '',
       email: payload.email ?? '',
       photoURL: payload.photoURL ?? '',
+      ...(typeof payload.isNewUser === 'boolean' ? { isNewUser: payload.isNewUser } : {}),
     },
     secret(),
     { expiresIn: '7d' },
@@ -27,7 +29,7 @@ export function signSessionToken(payload) {
  * @param {string} token
  */
 export function verifySessionToken(token) {
-  return /** @type {jwt.JwtPayload & { uid: string, displayName?: string, email?: string, photoURL?: string, qrGuest?: boolean, qrMatchCode?: string }} */ (
+  return /** @type {jwt.JwtPayload & { uid: string, displayName?: string, email?: string, photoURL?: string, qrGuest?: boolean, qrMatchCode?: string, isNewUser?: boolean }} */ (
     jwt.verify(token, secret())
   );
 }

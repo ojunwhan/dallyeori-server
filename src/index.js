@@ -4,6 +4,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import authRoutes from './auth/index.js';
+import { getUserStorePath } from './auth/userStore.js';
 import { verifySessionToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
 import { QrMatchManager } from './game/qrMatch.js';
@@ -358,4 +359,5 @@ app.get('/health', (_req, res) => {
 
 httpServer.listen(PORT, () => {
   console.log(`[dallyeori-server] http://localhost:${PORT}`);
+  console.log('[dallyeori-server] 유저 저장소는 MONO(lingora)와 분리된 로컬 파일:', getUserStorePath());
 });
