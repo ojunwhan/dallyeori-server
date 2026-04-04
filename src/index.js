@@ -50,6 +50,52 @@ const io = new Server(httpServer, {
 const matchmaker = new Matchmaker(io);
 const qrMatch = new QrMatchManager(io, matchmaker);
 
+/** @type {Map<string, Set<string>>} uid → socket.id (1:N 탭·기기) */
+const uidToSocketIds = new Map();
+
+/**
+ * @param {string} uid
+ * @param {string} socketId
+ */
+function registerUidSocket(uid, socketId) {
+  if (!uid || !socketId) return;
+  let set = uidToSocketIds.get(uid);
+  if (!set) {
+    set = new Set();
+    uidToSocketIds.set(uid, set);
+  }
+  set.add(socketId);
+}
+
+/**
+ * @param {string} uid
+ * @param {string} socketId
+ */
+function unregisterUidSocket(uid, socketId) {
+  if (!uid || !socketId) return;
+  const set = uidToSocketIds.get(uid);
+  if (!set) return;
+  set.delete(socketId);
+  if (set.size === 0) uidToSocketIds.delete(uid);
+}
+
+/**
+ * @param {string} toUid
+ * @param {string} exceptSocketId
+ * @returns {import('socket.io').Socket[]}
+ */
+function getPeerSocketsByUid(toUid, exceptSocketId) {
+  const set = uidToSocketIds.get(toUid);
+  if (!set || set.size === 0) return [];
+  const out = [];
+  for (const sid of set) {
+    if (sid === exceptSocketId) continue;
+    const s = io.sockets.sockets.get(sid);
+    if (s) out.push(s);
+  }
+  return out;
+}
+
 /**
  * @param {import('express').Request} req
  * @param {import('express').Response} res
@@ -98,6 +144,9 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  registerUidSocket(socket.data.uid, socket.id);
+  console.log('[socket] uid registered', socket.data.uid, '→', socket.id);
+
   if (socket.data.qrGuest) {
     queueMicrotask(() => qrMatch.tryJoinGuest(socket));
   }
@@ -177,17 +226,19 @@ io.on('connection', (socket) => {
       const fromUid = socket.data.uid;
       if (!fromUid) return;
 
-      /** @type {import('socket.io').Socket | null} */
-      let peerSocket = null;
-      for (const [, s] of io.sockets.sockets) {
-        if (s.data?.uid === payload.toUid && s.id !== socket.id) {
-          peerSocket = s;
-          break;
-        }
-      }
+      const peerSockets = getPeerSocketsByUid(payload.toUid, socket.id);
+      /** 번역용: 수신 측 언어 샘플 (동일 uid 탭들은 같은 language 가정) */
+      const peerSocket = peerSockets[0] ?? null;
 
       const fromLang = socket.data.language || 'ko';
       const toLang = peerSocket?.data?.language || 'ko';
+
+      if (peerSockets.length === 0) {
+        console.log('[sendChat] no recipient sockets online for uid:', payload.toUid, {
+          mapHasUid: uidToSocketIds.has(payload.toUid),
+          mapSize: uidToSocketIds.get(payload.toUid)?.size ?? 0,
+        });
+      }
       const textSlice = String(payload.text).slice(0, 2000);
 
       let translatedText = payload.translatedText
@@ -249,8 +300,9 @@ io.on('connection', (socket) => {
         });
       }
 
-      if (peerSocket) {
-        peerSocket.emit('receiveChat', msg);
+      for (const peer of peerSockets) {
+        peer.emit('receiveChat', msg);
+        console.log('[sendChat] delivering to socketId:', peer.id, 'uid:', payload.toUid);
       }
       socket.emit('chatSent', msg);
     } catch (e) {
@@ -259,6 +311,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    unregisterUidSocket(socket.data.uid, socket.id);
+    console.log('[socket] uid unregistered', socket.data.uid, '←', socket.id);
     qrMatch.onDisconnect(socket);
     matchmaker.cancel(socket.id);
   });
