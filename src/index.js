@@ -24,6 +24,12 @@ import {
   hasSentFreeToday,
   recordFreeSend,
 } from './db/heartStore.js';
+import {
+  getProfile,
+  trySaveProfileFromBody,
+  profileToClient,
+  searchByNickname,
+} from './db/profileStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
 
@@ -240,6 +246,56 @@ app.get('/api/hearts', requireUserJwt, (req, res) => {
   }
 });
 
+app.post('/api/profile', requireUserJwt, (req, res) => {
+  try {
+    const r = trySaveProfileFromBody(req.authUser.uid, req.body);
+    if (r.status === 400) {
+      res.status(400).json({ error: r.error });
+      return;
+    }
+    if (r.status === 409) {
+      res.status(409).json({ error: r.error });
+      return;
+    }
+    res.json({ success: true, profile: profileToClient(r.profile) });
+  } catch (e) {
+    console.warn('[api/profile POST]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.get('/api/profile/:uid', requireUserJwt, (req, res) => {
+  try {
+    const targetUid =
+      req.params && typeof req.params.uid === 'string' ? req.params.uid.trim() : '';
+    if (!targetUid) {
+      res.status(400).json({ error: 'bad uid' });
+      return;
+    }
+    const p = getProfile(targetUid);
+    if (!p) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    res.json(profileToClient(p));
+  } catch (e) {
+    console.warn('[api/profile/:uid]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.get('/api/users/search', requireUserJwt, (req, res) => {
+  try {
+    const qRaw = req.query.q;
+    const q = typeof qRaw === 'string' ? qRaw : '';
+    const users = searchByNickname(q, req.authUser.uid, 10);
+    res.json({ users });
+  } catch (e) {
+    console.warn('[api/users/search]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -257,6 +313,15 @@ io.use((socket, next) => {
     const lang = socket.handshake.auth?.language;
     socket.data.language =
       typeof lang === 'string' && lang.trim() ? lang.trim() : 'ko';
+    if (!socket.data.qrGuest) {
+      const prof = getProfile(payload.uid);
+      if (prof) {
+        if (prof.nickname) socket.data.displayName = prof.nickname;
+        if (prof.photoURL) socket.data.photoURL = prof.photoURL;
+        if (prof.language) socket.data.language = prof.language;
+        socket.data.selectedDuckId = prof.selectedDuckId || 'bori';
+      }
+    }
     next();
   } catch {
     next(new Error('unauthorized'));

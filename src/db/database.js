@@ -53,6 +53,16 @@ export function getDb() {
       sentDate TEXT NOT NULL,
       UNIQUE(fromUid, toUid, sentDate)
     );
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      uid TEXT PRIMARY KEY,
+      nickname TEXT,
+      photoURL TEXT,
+      language TEXT DEFAULT 'ko',
+      selectedDuckId TEXT DEFAULT 'bori',
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_nickname ON user_profiles(nickname COLLATE NOCASE);
   `);
   return _db;
 }
