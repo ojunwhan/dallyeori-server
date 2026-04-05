@@ -7,6 +7,7 @@ import authRoutes from './auth/index.js';
 import { getUserStorePath } from './auth/userStore.js';
 import { verifySessionToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
+import { normalizeTerrainKey } from './game/physics.js';
 import { QrMatchManager } from './game/qrMatch.js';
 
 const PORT = Number(process.env.PORT) || 3100;
@@ -323,6 +324,67 @@ io.on('connection', (socket) => {
       socket.emit('chatSent', msg);
     } catch (e) {
       console.warn('[sendChat] handler error', e);
+    }
+  });
+
+  socket.on('sendFriendRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const targetUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      const requestId =
+        payload && typeof payload.requestId === 'string' ? payload.requestId : '';
+      const fromUid = socket.data.uid;
+      if (!fromUid || !targetUid || targetUid === fromUid || !requestId) return;
+      const senderName =
+        (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
+      for (const peer of getAllSocketsByUid(targetUid)) {
+        peer.emit('receiveFriendRequest', {
+          senderUid: fromUid,
+          senderName,
+          requestId,
+        });
+      }
+    } catch (e) {
+      console.warn('[sendFriendRequest] handler error', e);
+    }
+  });
+
+  socket.on('sendRematch', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const targetUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      const fromUid = socket.data.uid;
+      if (!fromUid || !targetUid || targetUid === fromUid) return;
+      const senderName =
+        (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
+      for (const peer of getAllSocketsByUid(targetUid)) {
+        peer.emit('receiveRematch', { senderUid: fromUid, senderName });
+      }
+    } catch (e) {
+      console.warn('[sendRematch] handler error', e);
+    }
+  });
+
+  socket.on('acceptRematch', (data) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const peerUid = data && typeof data.peerUid === 'string' ? data.peerUid : '';
+      const accepterUid = socket.data.uid;
+      if (!peerUid || peerUid === accepterUid) return;
+      const terrainRaw = data && typeof data.terrain === 'string' ? data.terrain : 'normal';
+      const terrain = normalizeTerrainKey(terrainRaw);
+      const initiatorSockets = getAllSocketsByUid(peerUid);
+      const initiator = initiatorSockets.find((s) => s && s.connected);
+      if (!initiator) {
+        console.log('[acceptRematch] initiator offline', peerUid);
+        return;
+      }
+      const ok = matchmaker.pairDirectRematch(terrain, initiator, socket);
+      if (!ok) console.warn('[acceptRematch] pairDirectRematch failed');
+    } catch (e) {
+      console.warn('[acceptRematch] handler error', e);
     }
   });
 

@@ -181,6 +181,58 @@ export class Matchmaker {
   }
 
   /**
+   * 종료된 경기 방에 남아 있는 socketRoom 매핑 제거 (재매치 전 정리)
+   * @param {string} socketId
+   */
+  cleanupFinishedRoomForSocket(socketId) {
+    const rid = this.socketRoom.get(socketId);
+    if (!rid) return;
+    const room = this.rooms.get(rid);
+    if (!room || room.phase !== 'done') return;
+    this.rooms.delete(rid);
+    for (const [sid, r] of [...this.socketRoom.entries()]) {
+      if (r === rid) this.socketRoom.delete(sid);
+    }
+  }
+
+  /**
+   * 재대전 수락 — 큐에서 빼고 새 휴먼 룸 생성
+   * @param {string} terrainKey
+   * @param {import('socket.io').Socket} socketA
+   * @param {import('socket.io').Socket} socketB
+   * @returns {boolean}
+   */
+  pairDirectRematch(terrainKey, socketA, socketB) {
+    if (!socketA?.data?.uid || !socketB?.data?.uid) return false;
+    if (socketA.data.uid === socketB.data.uid) return false;
+    this.cleanupFinishedRoomForSocket(socketA.id);
+    this.cleanupFinishedRoomForSocket(socketB.id);
+    this.cancel(socketA.id, true);
+    this.cancel(socketB.id, true);
+    const profileFromSocket = (/** @type {import('socket.io').Socket} */ s) => ({
+      userId: s.data.uid,
+      nickname: s.data.displayName || '플레이어',
+      photoURL: s.data.photoURL || '',
+      duckId: 'bori',
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    });
+    const a = {
+      socket: socketA,
+      uid: socketA.data.uid,
+      profile: profileFromSocket(socketA),
+    };
+    const b = {
+      socket: socketB,
+      uid: socketB.data.uid,
+      profile: profileFromSocket(socketB),
+    };
+    this._createHumanRoom(terrainKey, a, b);
+    return true;
+  }
+
+  /**
    * @param {string} socketId
    * @param {boolean} [leaveQueueOnly]
    */
