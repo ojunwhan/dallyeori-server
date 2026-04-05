@@ -68,6 +68,7 @@ export class QrMatchManager {
       losses: body?.losses,
       draws: body?.draws,
     };
+    hostSocket.data.matchProfile = { ...hostProfile };
 
     const guestToken = signQrGuestToken(matchCode);
     const timeoutId = setTimeout(() => this.expire(matchCode), QR_PENDING_MS);
@@ -134,6 +135,7 @@ export class QrMatchManager {
       losses: 0,
       draws: 0,
     };
+    socket.data.matchProfile = { ...guestProfile };
 
     const hostEntry = {
       socket: p.hostSocket,

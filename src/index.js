@@ -114,6 +114,27 @@ function getAllSocketsByUid(uid) {
 }
 
 /**
+ * 동일 uid 탭 다중 연결 시 가장 최근 연결 소켓 사용 (재매치 시 죽은 소켓 방지)
+ * @param {string} uid
+ * @returns {import('socket.io').Socket | null}
+ */
+function pickNewestConnectedSocket(uid) {
+  const list = getAllSocketsByUid(uid).filter((s) => s.connected);
+  if (list.length === 0) return null;
+  let best = list[0];
+  let bestT = Number(best.data.connectedAt) || 0;
+  for (let i = 1; i < list.length; i += 1) {
+    const s = list[i];
+    const t = Number(s.data.connectedAt) || 0;
+    if (t >= bestT) {
+      best = s;
+      bestT = t;
+    }
+  }
+  return best;
+}
+
+/**
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next
@@ -160,13 +181,55 @@ io.use((socket, next) => {
   }
 });
 
+/**
+ * syncMatchProfile / sendRematch(profile) 공통 — socket.data.matchProfile 갱신
+ * @param {import('socket.io').Socket} socket
+ * @param {Record<string, unknown>} r
+ */
+function applyClientMatchProfile(socket, r) {
+  if (socket.data.qrGuest) return;
+  const nickRaw = r.nickname;
+  const nickname =
+    typeof nickRaw === 'string' && nickRaw.trim()
+      ? nickRaw.trim()
+      : socket.data.displayName || '플레이어';
+  const photoRaw = r.photoURL;
+  const photoURL = typeof photoRaw === 'string' ? photoRaw : socket.data.photoURL || '';
+  const duckRaw = r.duckId;
+  const duckId = typeof duckRaw === 'string' && duckRaw.trim() ? duckRaw.trim() : 'bori';
+  socket.data.matchProfile = {
+    userId: socket.data.uid,
+    nickname,
+    photoURL,
+    duckId,
+    wins: Number(r.wins) || 0,
+    losses: Number(r.losses) || 0,
+    draws: Number(r.draws) || 0,
+  };
+}
+
 io.on('connection', (socket) => {
+  socket.data.connectedAt = Date.now();
   registerUidSocket(socket.data.uid, socket.id);
   console.log('[socket] uid registered', socket.data.uid, '→', socket.id);
 
   if (socket.data.qrGuest) {
     queueMicrotask(() => qrMatch.tryJoinGuest(socket));
   }
+
+  socket.on('syncMatchProfile', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const raw =
+        payload && typeof payload === 'object'
+          ? /** @type {Record<string, unknown>} */ (payload).profile ?? payload
+          : null;
+      if (!raw || typeof raw !== 'object') return;
+      applyClientMatchProfile(socket, /** @type {Record<string, unknown>} */ (raw));
+    } catch (e) {
+      console.warn('[syncMatchProfile] error', e);
+    }
+  });
 
   socket.on('findMatch', (payload) => {
     if (socket.data.qrGuest) return;
@@ -229,11 +292,6 @@ io.on('connection', (socket) => {
     }
     console.log('[server] tap from', socket.id, payload);
     room.onTap(slot, foot);
-  });
-
-  socket.on('requestRematch', () => {
-    if (socket.data.qrGuest) return;
-    socket.emit('rematchRequest', { from: socket.data.uid });
   });
 
   // ──── 채팅 (기존 핸들러 아래에 추가) ────
@@ -352,11 +410,26 @@ io.on('connection', (socket) => {
 
   socket.on('sendRematch', (payload) => {
     try {
+      console.log('SEND_REMATCH received', {
+        from: socket.data.uid,
+        targetUid: payload && typeof payload === 'object' ? payload.targetUid : undefined,
+      });
       if (socket.data.qrGuest) return;
       const targetUid =
         payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid) return;
+      const profRaw =
+        payload && typeof payload === 'object' && payload.profile && typeof payload.profile === 'object'
+          ? /** @type {Record<string, unknown>} */ (payload.profile)
+          : null;
+      if (profRaw) {
+        try {
+          applyClientMatchProfile(socket, profRaw);
+        } catch (e) {
+          console.warn('[sendRematch] profile merge', e);
+        }
+      }
       const senderName =
         (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
       for (const peer of getAllSocketsByUid(targetUid)) {
@@ -369,16 +442,35 @@ io.on('connection', (socket) => {
 
   socket.on('acceptRematch', (data) => {
     try {
+      console.log('ACCEPT_REMATCH received', {
+        from: socket.data.uid,
+        peerUid: data && typeof data === 'object' ? data.peerUid : undefined,
+        connected: socket.connected,
+      });
       if (socket.data.qrGuest) return;
       const peerUid = data && typeof data.peerUid === 'string' ? data.peerUid : '';
       const accepterUid = socket.data.uid;
       if (!peerUid || peerUid === accepterUid) return;
+      const profRaw =
+        data && typeof data === 'object' && data.profile && typeof data.profile === 'object'
+          ? /** @type {Record<string, unknown>} */ (data.profile)
+          : null;
+      if (profRaw) {
+        try {
+          applyClientMatchProfile(socket, profRaw);
+        } catch (e) {
+          console.warn('[acceptRematch] profile merge', e);
+        }
+      }
       const terrainRaw = data && typeof data.terrain === 'string' ? data.terrain : 'normal';
       const terrain = normalizeTerrainKey(terrainRaw);
-      const initiatorSockets = getAllSocketsByUid(peerUid);
-      const initiator = initiatorSockets.find((s) => s && s.connected);
+      if (!socket.connected) {
+        console.warn('[acceptRematch] skip: accepter not connected');
+        return;
+      }
+      const initiator = pickNewestConnectedSocket(peerUid);
       if (!initiator) {
-        console.log('[acceptRematch] initiator offline', peerUid);
+        console.warn('[acceptRematch] skip: initiator offline', peerUid);
         return;
       }
       const ok = matchmaker.pairDirectRematch(terrain, initiator, socket);

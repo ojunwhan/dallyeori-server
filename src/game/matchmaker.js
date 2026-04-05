@@ -2,6 +2,34 @@ import { RaceRoom, profileToOpponent } from './raceRoom.js';
 import { randomBotProfile } from './botPlayer.js';
 import { normalizeTerrainKey } from './physics.js';
 
+/**
+ * 재매치·매칭용 — socket.data.matchProfile 우선, 없으면 JWT/소켓 표시 정보 폴백
+ * @param {import('socket.io').Socket} s
+ */
+export function getMatchProfile(s) {
+  const mp = s.data?.matchProfile;
+  if (mp && typeof mp === 'object') {
+    return {
+      userId: s.data.uid,
+      nickname: mp.nickname || s.data.displayName || '플레이어',
+      photoURL: mp.photoURL || s.data.photoURL || '',
+      duckId: mp.duckId || 'bori',
+      wins: mp.wins ?? 0,
+      losses: mp.losses ?? 0,
+      draws: mp.draws ?? 0,
+    };
+  }
+  return {
+    userId: s.data.uid,
+    nickname: s.data.displayName || '플레이어',
+    photoURL: s.data.photoURL || '',
+    duckId: 'bori',
+    wins: 0,
+    losses: 0,
+    draws: 0,
+  };
+}
+
 const MATCH_TIMEOUT_MS = 30_000;
 
 /**
@@ -50,6 +78,7 @@ export class Matchmaker {
       losses: profile.losses,
       draws: profile.draws,
     };
+    socket.data.matchProfile = merged;
     const entry = { socket, uid: socket.data.uid, profile: merged };
     const q = this._q(terrain);
     q.push(entry);
@@ -99,8 +128,9 @@ export class Matchmaker {
    * @param {string} terrain
    * @param {QueueEntry} a
    * @param {QueueEntry} b
+   * @param {{ rematch?: boolean }} [opts]
    */
-  _createHumanRoom(terrain, a, b) {
+  _createHumanRoom(terrain, a, b, opts = {}) {
     const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const pa = { ...a, slot: 0, isBot: false };
     const pb = { ...b, slot: 1, isBot: false };
@@ -108,6 +138,13 @@ export class Matchmaker {
     this.rooms.set(roomId, room);
     this.socketRoom.set(a.socket.id, roomId);
     this.socketRoom.set(b.socket.id, roomId);
+    if (opts.rematch) {
+      console.log('REMATCH: emitting matchFound', {
+        roomId,
+        p1uid: a.socket.data.uid,
+        p2uid: b.socket.data.uid,
+      });
+    }
     room.attachSocket(a.socket);
     room.attachSocket(b.socket);
     a.socket.emit('matchFound', {
@@ -188,7 +225,11 @@ export class Matchmaker {
     const rid = this.socketRoom.get(socketId);
     if (!rid) return;
     const room = this.rooms.get(rid);
-    if (!room || room.phase !== 'done') return;
+    if (!room) {
+      this.socketRoom.delete(socketId);
+      return;
+    }
+    if (room.phase !== 'done') return;
     this.rooms.delete(rid);
     for (const [sid, r] of [...this.socketRoom.entries()]) {
       if (r === rid) this.socketRoom.delete(sid);
@@ -205,30 +246,31 @@ export class Matchmaker {
   pairDirectRematch(terrainKey, socketA, socketB) {
     if (!socketA?.data?.uid || !socketB?.data?.uid) return false;
     if (socketA.data.uid === socketB.data.uid) return false;
+    console.log('REMATCH: entering pairDirectRematch', {
+      uid1: socketA.data.uid,
+      uid2: socketB.data.uid,
+    });
+    console.log('REMATCH profiles:', {
+      p1: socketA.data.matchProfile,
+      p2: socketB.data.matchProfile,
+    });
     this.cleanupFinishedRoomForSocket(socketA.id);
     this.cleanupFinishedRoomForSocket(socketB.id);
     this.cancel(socketA.id, true);
     this.cancel(socketB.id, true);
-    const profileFromSocket = (/** @type {import('socket.io').Socket} */ s) => ({
-      userId: s.data.uid,
-      nickname: s.data.displayName || '플레이어',
-      photoURL: s.data.photoURL || '',
-      duckId: 'bori',
-      wins: 0,
-      losses: 0,
-      draws: 0,
-    });
+    const pa = getMatchProfile(socketA);
+    const pb = getMatchProfile(socketB);
     const a = {
       socket: socketA,
       uid: socketA.data.uid,
-      profile: profileFromSocket(socketA),
+      profile: pa,
     };
     const b = {
       socket: socketB,
       uid: socketB.data.uid,
-      profile: profileFromSocket(socketB),
+      profile: pb,
     };
-    this._createHumanRoom(terrainKey, a, b);
+    this._createHumanRoom(terrainKey, a, b, { rematch: true });
     return true;
   }
 

@@ -132,7 +132,16 @@ export class RaceRoom {
    * @param {import('socket.io').Socket} socket
    */
   attachSocket(socket) {
+    const prev = socket.data?.raceChannel;
+    if (prev && typeof prev === 'string' && prev !== this.channel) {
+      try {
+        socket.leave(prev);
+      } catch {
+        /* ignore */
+      }
+    }
     socket.join(this.channel);
+    socket.data.raceChannel = this.channel;
   }
 
   /**
