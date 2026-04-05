@@ -47,7 +47,7 @@ export class RaceRoom {
     if (a.isBot) this.joined.add(0);
     if (b.isBot) this.joined.add(1);
     this.raceT = 0;
-    /** @type {'wait_join'|'racing'|'done'} */
+    /** @type {'wait_join'|'pending_start'|'racing'|'done'} */
     this.phase = 'wait_join';
     /** @type {ReturnType<typeof setInterval> | null} */
     this.tickTimer = null;
@@ -62,8 +62,45 @@ export class RaceRoom {
     this.botSlot = a.isBot ? 0 : b.isBot ? 1 : -1;
     /** @type {number | null} */
     this.pendingStartAt = null;
+    /** 레이스 실제 시작 시각 (ms) — raceTick.raceT = (now - raceStartAt)/1000 */
+    /** @type {number | null} */
+    this.raceStartAt = null;
+    /** 서버 카운트다운 시작 시각 (syncClient용) */
+    /** @type {number | null} */
+    this.countdownStartedAt = null;
+    /** @type {ReturnType<typeof setTimeout>[]} */
+    this._countdownTimers = [];
     /** @type {number} */
     this._dbgBroadcastCount = 0;
+  }
+
+  _clearCountdownTimers() {
+    for (const t of this._countdownTimers) {
+      clearTimeout(t);
+    }
+    this._countdownTimers = [];
+  }
+
+  /**
+   * 3 → 2 → 1 → 0(GO!) 초마다 emit, 이후 250ms 뒤 레이스 시작
+   */
+  _startServerCountdown() {
+    this._clearCountdownTimers();
+    this.countdownStartedAt = Date.now();
+    const counts = [3, 2, 1, 0];
+    counts.forEach((count, i) => {
+      const tid = setTimeout(() => {
+        if (this.phase !== 'pending_start') return;
+        this.io.to(this.channel).emit('countdown', { count });
+        if (count === 0) {
+          const tidGo = setTimeout(() => {
+            if (this.phase === 'pending_start') this.beginRacing();
+          }, 250);
+          this._countdownTimers.push(tidGo);
+        }
+      }, i * 1000);
+      this._countdownTimers.push(tid);
+    });
   }
 
   /**
@@ -71,21 +108,23 @@ export class RaceRoom {
    * @param {import('socket.io').Socket} socket
    */
   syncClient(socket) {
-    if (this.phase === 'pending_start' && this.pendingStartAt != null) {
-      const deadline = this.pendingStartAt + 4000;
-      socket.emit('preRaceCountdown', {
-        seconds: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)),
-        deadline,
-      });
+    if (this.phase === 'pending_start' && this.countdownStartedAt != null) {
+      const elapsed = Date.now() - this.countdownStartedAt;
+      const idx = Math.min(3, Math.floor(elapsed / 1000));
+      const counts = [3, 2, 1, 0];
+      socket.emit('countdown', { count: counts[idx], sync: true });
       return;
     }
     if (this.phase === 'racing') {
+      socket.emit('race-start');
       socket.emit('raceGo');
+      const wallT =
+        this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
       const players = [
         duckToWire(this.ducks[0], this.raceT),
         duckToWire(this.ducks[1], this.raceT),
       ];
-      socket.emit('raceTick', { raceT: this.raceT, players });
+      socket.emit('raceTick', { raceT: wallT, players });
     }
   }
 
@@ -104,16 +143,18 @@ export class RaceRoom {
     if (this.joined.size >= 2 && this.phase === 'wait_join') {
       this.phase = 'pending_start';
       this.pendingStartAt = Date.now();
-      const deadline = this.pendingStartAt + 4000;
-      this.io.to(this.channel).emit('preRaceCountdown', { seconds: 4, deadline });
-      setTimeout(() => this.beginRacing(), 4000);
+      this.io.to(this.channel).emit('race-matched', { roomId: this.roomId });
+      this._startServerCountdown();
     }
   }
 
   beginRacing() {
     if (this.phase === 'done') return;
+    this._clearCountdownTimers();
     this.phase = 'racing';
+    this.raceStartAt = Date.now();
     this.raceT = 0;
+    this.io.to(this.channel).emit('race-start');
     this.io.to(this.channel).emit('raceGo');
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
   }
@@ -121,7 +162,9 @@ export class RaceRoom {
   tick() {
     if (this.phase !== 'racing') return;
     const dt = TICK_MS / 1000;
-    this.raceT += dt;
+    const wallT =
+      this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT + dt;
+    this.raceT = wallT;
     if (this.botScheduler != null && this.botSlot >= 0) {
       this.botScheduler.tick(dt, this.raceT);
     }
@@ -137,7 +180,7 @@ export class RaceRoom {
       }
       return;
     }
-    if (this.raceT >= RACE_TIME_LIMIT_SEC) {
+    if (wallT >= RACE_TIME_LIMIT_SEC) {
       const eps = 1e-5;
       let w = 1;
       if (this.ducks[0].dist > this.ducks[1].dist + eps) w = 0;
@@ -155,13 +198,16 @@ export class RaceRoom {
   finish(winnerSlot) {
     if (this.phase === 'done') return;
     this.phase = 'done';
+    this._clearCountdownTimers();
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+    const wallT =
+      this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
     const payload = {
       winnerSlot,
-      raceTime: Math.min(this.raceT, RACE_TIME_LIMIT_SEC),
+      raceTime: Math.min(wallT, RACE_TIME_LIMIT_SEC),
       distances: [this.ducks[0].dist, this.ducks[1].dist],
       taps: [this.ducks[0].taps, this.ducks[1].taps],
     };
@@ -169,16 +215,25 @@ export class RaceRoom {
   }
 
   broadcastTick() {
+    const wallT =
+      this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
     const players = [
       duckToWire(this.ducks[0], this.raceT),
       duckToWire(this.ducks[1], this.raceT),
     ];
     this._dbgBroadcastCount += 1;
     if (this._dbgBroadcastCount % 30 === 1) {
-      console.log('[server] raceTick broadcast, p1(dist):', this.ducks[0].dist, 'p2:', this.ducks[1].dist, 'raceT:', this.raceT);
+      console.log(
+        '[server] raceTick broadcast, p1(dist):',
+        this.ducks[0].dist,
+        'p2:',
+        this.ducks[1].dist,
+        'raceT(wall):',
+        wallT,
+      );
     }
     this.io.to(this.channel).emit('raceTick', {
-      raceT: this.raceT,
+      raceT: wallT,
       players,
     });
   }
