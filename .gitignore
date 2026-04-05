@@ -1,5 +1,6 @@
 node_modules/
 data/
+data/*.db
 .env
 .env.local
 .env.*.local

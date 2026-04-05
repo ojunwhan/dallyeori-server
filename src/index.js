@@ -9,6 +9,13 @@ import { verifySessionToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
 import { normalizeTerrainKey } from './game/physics.js';
 import { QrMatchManager } from './game/qrMatch.js';
+import {
+  saveMessage,
+  getMessages,
+  getUnreadMessages,
+  markAsRead,
+  rowToClientMessage,
+} from './db/messageStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
 
@@ -158,6 +165,61 @@ function requireUserJwt(req, res, next) {
   }
 }
 
+app.get('/api/messages/unread', requireUserJwt, (req, res) => {
+  try {
+    const rows = getUnreadMessages(req.authUser.uid);
+    res.json({ messages: rows.map(rowToClientMessage) });
+  } catch (e) {
+    console.warn('[api/messages/unread]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.get('/api/messages/:peerUid', requireUserJwt, (req, res) => {
+  try {
+    const me = req.authUser.uid;
+    const peerUid = req.params.peerUid;
+    if (!peerUid || peerUid === me) {
+      res.status(400).json({ error: 'bad peer' });
+      return;
+    }
+    const limitRaw = req.query.limit;
+    const limit =
+      limitRaw != null && limitRaw !== '' ? parseInt(String(limitRaw), 10) : 50;
+    const beforeRaw = req.query.beforeId;
+    let beforeId = null;
+    if (beforeRaw != null && beforeRaw !== '') {
+      const n = parseInt(String(beforeRaw), 10);
+      if (!Number.isFinite(n)) {
+        res.status(400).json({ error: 'bad beforeId' });
+        return;
+      }
+      beforeId = n;
+    }
+    const rows = getMessages(me, peerUid, limit, beforeId);
+    res.json({ messages: rows.map(rowToClientMessage) });
+  } catch (e) {
+    console.warn('[api/messages/:peerUid]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.post('/api/messages/read', requireUserJwt, (req, res) => {
+  try {
+    const peerUid =
+      req.body && typeof req.body.peerUid === 'string' ? req.body.peerUid : '';
+    if (!peerUid || peerUid === req.authUser.uid) {
+      res.status(400).json({ error: 'peerUid required' });
+      return;
+    }
+    const updated = markAsRead(req.authUser.uid, peerUid);
+    res.json({ ok: true, updated });
+  } catch (e) {
+    console.warn('[api/messages/read]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -215,6 +277,18 @@ io.on('connection', (socket) => {
 
   if (socket.data.qrGuest) {
     queueMicrotask(() => qrMatch.tryJoinGuest(socket));
+  } else {
+    try {
+      const unreadRows = getUnreadMessages(socket.data.uid);
+      if (unreadRows.length > 0) {
+        socket.emit(
+          'unreadMessages',
+          unreadRows.map(rowToClientMessage),
+        );
+      }
+    } catch (e) {
+      console.warn('[socket] unreadMessages', e);
+    }
   }
 
   socket.on('syncMatchProfile', (payload) => {
@@ -347,15 +421,19 @@ io.on('connection', (socket) => {
         console.log('[sendChat] same language, skip translate:', socket.data.language);
       }
 
-      const msg = {
-        id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        fromId: fromUid,
-        toId: payload.toUid,
+      const saved = saveMessage({
+        fromUid,
+        toUid: payload.toUid,
         text: textSlice,
-        originalText: textSlice,
-        translatedText,
-        ts: Date.now(),
-      };
+        translatedText: translatedText ?? null,
+        fromLang,
+        toLang,
+      });
+      if (!saved) {
+        console.warn('[sendChat] saveMessage failed');
+        return;
+      }
+      const msg = rowToClientMessage(saved);
 
       console.log('[sendChat]', {
         from: fromUid,
