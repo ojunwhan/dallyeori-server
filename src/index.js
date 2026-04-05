@@ -268,6 +268,29 @@ io.use((socket, next) => {
  * @param {import('socket.io').Socket} socket
  * @param {Record<string, unknown>} r
  */
+/**
+ * 친구 요청 수신 측 표시용 — JWT + syncMatchProfile 반영
+ * @param {import('socket.io').Socket} socket
+ */
+function friendRequestSenderProfile(socket) {
+  const mp = socket.data.matchProfile;
+  const nickMp = mp && typeof mp.nickname === 'string' ? mp.nickname.trim() : '';
+  const disp =
+    socket.data.displayName && typeof socket.data.displayName === 'string'
+      ? socket.data.displayName.trim()
+      : '';
+  const nickname = nickMp || disp || socket.data.uid || 'player';
+  const photoFromMp = mp && typeof mp.photoURL === 'string' ? mp.photoURL.trim() : '';
+  const photoFromData =
+    socket.data.photoURL && typeof socket.data.photoURL === 'string'
+      ? socket.data.photoURL.trim()
+      : '';
+  const photoURL = photoFromMp || photoFromData || '';
+  const duckFromMp = mp && typeof mp.duckId === 'string' ? mp.duckId.trim() : '';
+  const duckId = duckFromMp || 'bori';
+  return { nickname, photoURL, duckId };
+}
+
 function applyClientMatchProfile(socket, r) {
   if (socket.data.qrGuest) return;
   const nickRaw = r.nickname;
@@ -497,12 +520,18 @@ io.on('connection', (socket) => {
         payload && typeof payload.requestId === 'string' ? payload.requestId : '';
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid || !requestId) return;
-      const senderName =
-        (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
-      for (const peer of getAllSocketsByUid(targetUid)) {
+      const prof = friendRequestSenderProfile(socket);
+      const receivers = getAllSocketsByUid(targetUid).filter((s) => s.connected);
+      if (receivers.length === 0) {
+        console.warn('[sendFriendRequest] target has no connected socket', targetUid);
+      }
+      for (const peer of receivers) {
         peer.emit('receiveFriendRequest', {
           senderUid: fromUid,
-          senderName,
+          senderName: prof.nickname,
+          nickname: prof.nickname,
+          photoURL: prof.photoURL,
+          duckId: prof.duckId,
           requestId,
         });
       }
