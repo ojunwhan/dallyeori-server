@@ -98,6 +98,21 @@ function getPeerSocketsByUid(toUid, exceptSocketId) {
 }
 
 /**
+ * @param {string} uid
+ * @returns {import('socket.io').Socket[]}
+ */
+function getAllSocketsByUid(uid) {
+  const set = uidToSocketIds.get(uid);
+  if (!set || set.size === 0) return [];
+  const out = [];
+  for (const sid of set) {
+    const s = io.sockets.sockets.get(sid);
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+/**
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next
@@ -308,6 +323,28 @@ io.on('connection', (socket) => {
       socket.emit('chatSent', msg);
     } catch (e) {
       console.warn('[sendChat] handler error', e);
+    }
+  });
+
+  /** 클라이언트 일일 하트(로컬 적립은 그대로) — 수신자에게만 알림 */
+  socket.on('sendHeart', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const targetUid = payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      const fromUid = socket.data.uid;
+      if (!fromUid || !targetUid || targetUid === fromUid) return;
+
+      const senderName =
+        (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
+      const receivers = getAllSocketsByUid(targetUid);
+      for (const peer of receivers) {
+        peer.emit('receiveHeart', { senderUid: fromUid, senderName });
+      }
+      if (receivers.length === 0) {
+        console.log('[sendHeart] recipient offline', { to: targetUid, from: fromUid });
+      }
+    } catch (e) {
+      console.warn('[sendHeart] handler error', e);
     }
   });
 
