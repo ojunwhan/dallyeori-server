@@ -290,7 +290,6 @@ io.on('connection', (socket) => {
       console.log('[server] tap ignored: bad slot', socket.id, payload);
       return;
     }
-    console.log('[server] tap from', socket.id, payload);
     room.onTap(slot, foot);
   });
 
@@ -410,10 +409,6 @@ io.on('connection', (socket) => {
 
   socket.on('sendRematch', (payload) => {
     try {
-      console.log('SEND_REMATCH received', {
-        from: socket.data.uid,
-        targetUid: payload && typeof payload === 'object' ? payload.targetUid : undefined,
-      });
       if (socket.data.qrGuest) return;
       const targetUid =
         payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
@@ -442,11 +437,6 @@ io.on('connection', (socket) => {
 
   socket.on('acceptRematch', (data) => {
     try {
-      console.log('ACCEPT_REMATCH received', {
-        from: socket.data.uid,
-        peerUid: data && typeof data === 'object' ? data.peerUid : undefined,
-        connected: socket.connected,
-      });
       if (socket.data.qrGuest) return;
       const peerUid = data && typeof data.peerUid === 'string' ? data.peerUid : '';
       const accepterUid = socket.data.uid;

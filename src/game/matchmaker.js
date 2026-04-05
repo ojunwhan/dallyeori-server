@@ -128,9 +128,8 @@ export class Matchmaker {
    * @param {string} terrain
    * @param {QueueEntry} a
    * @param {QueueEntry} b
-   * @param {{ rematch?: boolean }} [opts]
    */
-  _createHumanRoom(terrain, a, b, opts = {}) {
+  _createHumanRoom(terrain, a, b) {
     const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const pa = { ...a, slot: 0, isBot: false };
     const pb = { ...b, slot: 1, isBot: false };
@@ -138,13 +137,6 @@ export class Matchmaker {
     this.rooms.set(roomId, room);
     this.socketRoom.set(a.socket.id, roomId);
     this.socketRoom.set(b.socket.id, roomId);
-    if (opts.rematch) {
-      console.log('REMATCH: emitting matchFound', {
-        roomId,
-        p1uid: a.socket.data.uid,
-        p2uid: b.socket.data.uid,
-      });
-    }
     room.attachSocket(a.socket);
     room.attachSocket(b.socket);
     a.socket.emit('matchFound', {
@@ -246,14 +238,6 @@ export class Matchmaker {
   pairDirectRematch(terrainKey, socketA, socketB) {
     if (!socketA?.data?.uid || !socketB?.data?.uid) return false;
     if (socketA.data.uid === socketB.data.uid) return false;
-    console.log('REMATCH: entering pairDirectRematch', {
-      uid1: socketA.data.uid,
-      uid2: socketB.data.uid,
-    });
-    console.log('REMATCH profiles:', {
-      p1: socketA.data.matchProfile,
-      p2: socketB.data.matchProfile,
-    });
     this.cleanupFinishedRoomForSocket(socketA.id);
     this.cleanupFinishedRoomForSocket(socketB.id);
     this.cancel(socketA.id, true);
@@ -270,7 +254,7 @@ export class Matchmaker {
       uid: socketB.data.uid,
       profile: pb,
     };
-    this._createHumanRoom(terrainKey, a, b, { rematch: true });
+    this._createHumanRoom(terrainKey, a, b);
     return true;
   }
 

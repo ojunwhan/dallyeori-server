@@ -70,8 +70,9 @@ export class RaceRoom {
     this.countdownStartedAt = null;
     /** @type {ReturnType<typeof setTimeout>[]} */
     this._countdownTimers = [];
-    /** @type {number} */
-    this._dbgBroadcastCount = 0;
+    /** 5초 단위 raceTick 디버그 로그용 */
+    /** @type {number | undefined} */
+    this._dbgRaceTickLogBucket = undefined;
   }
 
   _clearCountdownTimers() {
@@ -230,8 +231,9 @@ export class RaceRoom {
       duckToWire(this.ducks[0], this.raceT),
       duckToWire(this.ducks[1], this.raceT),
     ];
-    this._dbgBroadcastCount += 1;
-    if (this._dbgBroadcastCount % 30 === 1) {
+    const tickBucket = Math.floor(wallT / 5);
+    if (tickBucket !== this._dbgRaceTickLogBucket) {
+      this._dbgRaceTickLogBucket = tickBucket;
       console.log(
         '[server] raceTick broadcast, p1(dist):',
         this.ducks[0].dist,
@@ -256,13 +258,11 @@ export class RaceRoom {
       console.log('[server] onTap ignored: phase is', this.phase, { slot, foot });
       return;
     }
-    console.log('[server] onTap apply', { roomId: this.roomId, slot, foot });
     const f = foot === 'right' ? 'R' : 'L';
     applyTap(this.ducks[slot], f, this.terrain, this.raceT, {});
     const opp = 1 - slot;
     const peerEntry = this.entries[opp];
     if (peerEntry?.socket && !peerEntry.isBot) {
-      console.log('[server] peerTap emit to slot', opp, 'foot', foot);
       peerEntry.socket.emit('peerTap', { slot, foot });
     } else {
       console.log('[server] peerTap skip', {
