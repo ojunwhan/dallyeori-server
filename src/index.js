@@ -605,6 +605,54 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('acceptFriendRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const accepterUid = socket.data.uid;
+      const peerUid =
+        payload && typeof payload.peerUid === 'string' ? payload.peerUid.trim() : '';
+      const requestId =
+        payload && typeof payload.requestId === 'string' ? payload.requestId : '';
+      if (!accepterUid || !peerUid || peerUid === accepterUid) return;
+
+      const senderProf = getProfile(peerUid);
+      const accepterProf = getProfile(accepterUid);
+      const senderSockets = getAllSocketsByUid(peerUid).filter((s) => s.connected);
+      const ss = senderSockets[0];
+
+      const forSender = {
+        peerUid: accepterUid,
+        requestId,
+        nickname:
+          accepterProf?.nickname ||
+          (socket.data.displayName && String(socket.data.displayName).trim()) ||
+          '',
+        photoURL: accepterProf?.photoURL || socket.data.photoURL || '',
+        duckId: accepterProf?.selectedDuckId || socket.data.selectedDuckId || 'bori',
+      };
+      const forAccepter = {
+        peerUid,
+        requestId,
+        nickname:
+          senderProf?.nickname ||
+          (ss?.data?.displayName && String(ss.data.displayName).trim()) ||
+          '',
+        photoURL: senderProf?.photoURL || ss?.data?.photoURL || '',
+        duckId: senderProf?.selectedDuckId || ss?.data?.selectedDuckId || 'bori',
+      };
+
+      const emitToUid = (uid, data) => {
+        for (const s of getAllSocketsByUid(uid).filter((c) => c.connected)) {
+          s.emit('friendAccepted', data);
+        }
+      };
+      emitToUid(peerUid, forSender);
+      emitToUid(accepterUid, forAccepter);
+    } catch (e) {
+      console.warn('[acceptFriendRequest] handler error', e);
+    }
+  });
+
   socket.on('sendRematch', (payload) => {
     try {
       if (socket.data.qrGuest) return;
