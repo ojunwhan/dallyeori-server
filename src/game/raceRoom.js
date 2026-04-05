@@ -9,6 +9,7 @@ import {
   stepDuck,
 } from './physics.js';
 import { createBotTapScheduler } from './botPlayer.js';
+import { addHearts, consumeHearts, getBalance } from '../db/heartStore.js';
 
 const TICK_MS = 16;
 
@@ -34,10 +35,15 @@ export class RaceRoom {
    * @param {{ socket: import('socket.io').Socket | null, uid: string, profile: object, slot: number, isBot?: boolean }} a
    * @param {{ socket: import('socket.io').Socket | null, uid: string, profile: object, slot: number, isBot?: boolean }} b
    * @param {string} terrainKey
+   * @param {{ isQrMatch?: boolean, onAbortedBeforeRace?: () => void }} [opts]
    */
-  constructor(io, roomId, a, b, terrainKey) {
+  constructor(io, roomId, a, b, terrainKey, opts = {}) {
     this.io = io;
     this.roomId = roomId;
+    /** QR: 호스트만 race_entry 차감 */
+    this.isQrMatch = Boolean(opts.isQrMatch);
+    this.onAbortedBeforeRace =
+      typeof opts.onAbortedBeforeRace === 'function' ? opts.onAbortedBeforeRace : null;
     this.channel = `race:${roomId}`;
     this.terrainKey = normalizeTerrainKey(terrainKey);
     this.terrain = getTerrain(this.terrainKey);
@@ -160,6 +166,33 @@ export class RaceRoom {
 
   beginRacing() {
     if (this.phase === 'done') return;
+    /** @type {string[]} */
+    const chargedUids = [];
+    for (let slot = 0; slot < 2; slot += 1) {
+      const e = this.entries[slot];
+      if (!e || e.isBot) continue;
+      if (this.isQrMatch && slot === 1) continue;
+      const r = consumeHearts(e.uid, 1, 'race_entry');
+      if (!r.success) {
+        for (const uid of chargedUids) {
+          addHearts(uid, 1, 'race_entry_refund');
+        }
+        this._clearCountdownTimers();
+        this.phase = 'done';
+        this.io.to(this.channel).emit('raceAborted', {
+          reason: 'noHearts',
+          failedUid: e.uid,
+          balance: r.balance,
+        });
+        try {
+          this.onAbortedBeforeRace?.();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      chargedUids.push(e.uid);
+    }
     this._clearCountdownTimers();
     this.phase = 'racing';
     this.raceStartAt = Date.now();
@@ -215,11 +248,41 @@ export class RaceRoom {
     }
     const wallT =
       this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
+
+    const e0 = this.entries[0];
+    const e1 = this.entries[1];
+    const uid0 = e0 && !e0.isBot ? e0.uid : null;
+    const uid1 = e1 && !e1.isBot ? e1.uid : null;
+
+    if (winnerSlot === -1) {
+      if (this.isQrMatch) {
+        if (uid0) addHearts(uid0, 1, 'race_draw_refund', uid1 || undefined);
+      } else {
+        if (uid0) addHearts(uid0, 1, 'race_draw_refund', uid1 || undefined);
+        if (uid1) addHearts(uid1, 1, 'race_draw_refund', uid0 || undefined);
+      }
+    } else {
+      const w = winnerSlot;
+      const winnerEntry = w === 0 ? e0 : e1;
+      const loserEntry = w === 0 ? e1 : e0;
+      const winnerUid = winnerEntry && !winnerEntry.isBot ? winnerEntry.uid : null;
+      const loserUid = loserEntry && !loserEntry.isBot ? loserEntry.uid : null;
+      if (winnerUid) {
+        addHearts(winnerUid, 1, 'race_win', loserUid || undefined);
+      }
+    }
+
+    /** @type {Record<string, number>} */
+    const hearts = {};
+    if (uid0) hearts[uid0] = getBalance(uid0).balance;
+    if (uid1) hearts[uid1] = getBalance(uid1).balance;
+
     const payload = {
       winnerSlot,
       raceTime: Math.min(wallT, RACE_TIME_LIMIT_SEC),
       distances: [this.ducks[0].dist, this.ducks[1].dist],
       taps: [this.ducks[0].taps, this.ducks[1].taps],
+      hearts,
     };
     this.io.to(this.channel).emit('raceResult', payload);
   }

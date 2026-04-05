@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { signQrGuestToken } from '../auth/session.js';
 import { normalizeTerrainKey } from './physics.js';
+import { getBalance } from '../db/heartStore.js';
 
 const QR_PENDING_MS = 180_000;
 const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -119,6 +120,17 @@ export class QrMatchManager {
     const p = this.pending.get(matchCode);
     if (!p) {
       socket.emit('qrJoinFailed', { reason: 'expired_or_invalid' });
+      return;
+    }
+
+    const hostBal = getBalance(p.hostSocket.data.uid);
+    if (hostBal.balance < 1) {
+      socket.emit('qrJoinFailed', { reason: 'host_no_hearts' });
+      try {
+        p.hostSocket.emit('matchError', { reason: 'noHearts', balance: hostBal.balance });
+      } catch {
+        /* ignore */
+      }
       return;
     }
 

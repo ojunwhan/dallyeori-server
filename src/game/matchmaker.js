@@ -1,6 +1,7 @@
 import { RaceRoom, profileToOpponent } from './raceRoom.js';
 import { randomBotProfile } from './botPlayer.js';
 import { normalizeTerrainKey } from './physics.js';
+import { getBalance } from '../db/heartStore.js';
 
 /**
  * 재매치·매칭용 — socket.data.matchProfile 우선, 없으면 JWT/소켓 표시 정보 폴백
@@ -53,6 +54,18 @@ export class Matchmaker {
   }
 
   /**
+   * 하트 부족 등으로 레이스 시작 전 중단 시 방·소켓 매핑 제거
+   * @param {string} roomId
+   */
+  _dropRoom(roomId) {
+    if (!this.rooms.has(roomId)) return;
+    this.rooms.delete(roomId);
+    for (const [sid, rid] of [...this.socketRoom.entries()]) {
+      if (rid === roomId) this.socketRoom.delete(sid);
+    }
+  }
+
+  /**
    * @param {string} terrain
    * @returns {QueueEntry[]}
    */
@@ -69,6 +82,11 @@ export class Matchmaker {
    */
   enqueue(socket, terrain, profile) {
     this.cancel(socket.id, false);
+    const hb = getBalance(socket.data.uid);
+    if (hb.balance < 1) {
+      socket.emit('matchError', { reason: 'noHearts', balance: hb.balance });
+      return;
+    }
     const merged = {
       userId: socket.data.uid,
       nickname: profile.nickname || socket.data.displayName || '플레이어',
@@ -133,7 +151,10 @@ export class Matchmaker {
     const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const pa = { ...a, slot: 0, isBot: false };
     const pb = { ...b, slot: 1, isBot: false };
-    const room = new RaceRoom(this.io, roomId, pa, pb, terrain);
+    const room = new RaceRoom(this.io, roomId, pa, pb, terrain, {
+      isQrMatch: false,
+      onAbortedBeforeRace: () => this._dropRoom(roomId),
+    });
     this.rooms.set(roomId, room);
     this.socketRoom.set(a.socket.id, roomId);
     this.socketRoom.set(b.socket.id, roomId);
@@ -164,7 +185,10 @@ export class Matchmaker {
     const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const pa = { ...human, slot: 0, isBot: false };
     const pb = { ...botEntry, slot: 1, isBot: true };
-    const room = new RaceRoom(this.io, roomId, pa, pb, terrain);
+    const room = new RaceRoom(this.io, roomId, pa, pb, terrain, {
+      isQrMatch: false,
+      onAbortedBeforeRace: () => this._dropRoom(roomId),
+    });
     this.rooms.set(roomId, room);
     this.socketRoom.set(human.socket.id, roomId);
     room.attachSocket(human.socket);
@@ -187,7 +211,10 @@ export class Matchmaker {
     const roomId = `rm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const pa = { ...hostEntry, slot: 0, isBot: false };
     const pb = { ...guestEntry, slot: 1, isBot: false };
-    const room = new RaceRoom(this.io, roomId, pa, pb, terrain);
+    const room = new RaceRoom(this.io, roomId, pa, pb, terrain, {
+      isQrMatch: true,
+      onAbortedBeforeRace: () => this._dropRoom(roomId),
+    });
     this.rooms.set(roomId, room);
     this.socketRoom.set(hostEntry.socket.id, roomId);
     this.socketRoom.set(guestEntry.socket.id, roomId);
@@ -254,6 +281,16 @@ export class Matchmaker {
       uid: socketB.data.uid,
       profile: pb,
     };
+    const ba = getBalance(socketA.data.uid);
+    const bb = getBalance(socketB.data.uid);
+    if (ba.balance < 1) {
+      socketA.emit('matchError', { reason: 'noHearts', balance: ba.balance });
+      return false;
+    }
+    if (bb.balance < 1) {
+      socketB.emit('matchError', { reason: 'noHearts', balance: bb.balance });
+      return false;
+    }
     this._createHumanRoom(terrainKey, a, b);
     return true;
   }

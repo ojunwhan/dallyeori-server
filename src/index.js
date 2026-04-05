@@ -16,6 +16,12 @@ import {
   markAsRead,
   rowToClientMessage,
 } from './db/messageStore.js';
+import {
+  getBalance as getHeartBalance,
+  getTransactions as getHeartTransactions,
+  consumeHearts,
+  addHearts,
+} from './db/heartStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
 
@@ -220,6 +226,18 @@ app.post('/api/messages/read', requireUserJwt, (req, res) => {
   }
 });
 
+app.get('/api/hearts', requireUserJwt, (req, res) => {
+  try {
+    const uid = req.authUser.uid;
+    const { balance } = getHeartBalance(uid);
+    const transactions = getHeartTransactions(uid, 20);
+    res.json({ balance, transactions });
+  } catch (e) {
+    console.warn('[api/hearts]', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -288,6 +306,12 @@ io.on('connection', (socket) => {
       }
     } catch (e) {
       console.warn('[socket] unreadMessages', e);
+    }
+    try {
+      const hb = getHeartBalance(socket.data.uid);
+      socket.emit('heartBalance', { balance: hb.balance });
+    } catch (e) {
+      console.warn('[socket] heartBalance', e);
     }
   }
 
@@ -548,13 +572,19 @@ io.on('connection', (socket) => {
     }
   });
 
-  /** 클라이언트 일일 하트(로컬 적립은 그대로) — 수신자에게만 알림 */
   socket.on('sendHeart', (payload) => {
     try {
       if (socket.data.qrGuest) return;
       const targetUid = payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid) return;
+
+      const spent = consumeHearts(fromUid, 1, 'gift_send', targetUid);
+      if (!spent.success) {
+        socket.emit('heartError', { reason: 'noHearts', targetUid });
+        return;
+      }
+      addHearts(targetUid, 1, 'gift_receive', fromUid);
 
       const senderName =
         (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
@@ -564,6 +594,19 @@ io.on('connection', (socket) => {
       }
       if (receivers.length === 0) {
         console.log('[sendHeart] recipient offline', { to: targetUid, from: fromUid });
+      }
+
+      try {
+        socket.emit('heartBalance', { balance: getHeartBalance(fromUid).balance });
+      } catch {
+        /* ignore */
+      }
+      for (const peer of receivers) {
+        try {
+          peer.emit('heartBalance', { balance: getHeartBalance(targetUid).balance });
+        } catch {
+          /* ignore */
+        }
       }
     } catch (e) {
       console.warn('[sendHeart] handler error', e);
