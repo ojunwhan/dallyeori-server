@@ -21,6 +21,8 @@ import {
   getTransactions as getHeartTransactions,
   consumeHearts,
   addHearts,
+  hasSentFreeToday,
+  recordFreeSend,
 } from './db/heartStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
@@ -579,31 +581,56 @@ io.on('connection', (socket) => {
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid) return;
 
-      const spent = consumeHearts(fromUid, 1, 'gift_send', targetUid);
-      if (!spent.success) {
-        socket.emit('heartError', { reason: 'noHearts', targetUid });
-        return;
-      }
-      addHearts(targetUid, 1, 'gift_receive', fromUid);
-
       const senderName =
         (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
       const receivers = getAllSocketsByUid(targetUid);
+      const senderSockets = getAllSocketsByUid(fromUid);
+
+      /** @type {boolean} */
+      let free = false;
+      if (!hasSentFreeToday(fromUid, targetUid) && recordFreeSend(fromUid, targetUid)) {
+        free = true;
+        addHearts(targetUid, 1, 'gift_free', fromUid);
+      } else {
+        const spent = consumeHearts(fromUid, 1, 'gift_paid', targetUid);
+        if (!spent.success) {
+          socket.emit('heartError', { reason: 'noHearts', targetUid });
+          return;
+        }
+        addHearts(targetUid, 1, 'gift_receive', fromUid);
+      }
+
       for (const peer of receivers) {
-        peer.emit('receiveHeart', { senderUid: fromUid, senderName });
+        peer.emit('receiveHeart', { senderUid: fromUid, senderName, free });
       }
       if (receivers.length === 0) {
         console.log('[sendHeart] recipient offline', { to: targetUid, from: fromUid });
       }
 
+      for (const s of senderSockets) {
+        try {
+          s.emit('heartGiftSent', { free, targetUid });
+        } catch {
+          /* ignore */
+        }
+      }
+
       try {
-        socket.emit('heartBalance', { balance: getHeartBalance(fromUid).balance });
+        const fromBal = getHeartBalance(fromUid).balance;
+        for (const s of senderSockets) {
+          try {
+            s.emit('heartBalance', { balance: fromBal });
+          } catch {
+            /* ignore */
+          }
+        }
       } catch {
         /* ignore */
       }
+      const toBal = getHeartBalance(targetUid).balance;
       for (const peer of receivers) {
         try {
-          peer.emit('heartBalance', { balance: getHeartBalance(targetUid).balance });
+          peer.emit('heartBalance', { balance: toBal });
         } catch {
           /* ignore */
         }

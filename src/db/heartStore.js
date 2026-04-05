@@ -1,6 +1,47 @@
 import { getDb } from './database.js';
 
 /**
+ * KST 기준 오늘 날짜 YYYY-MM-DD
+ * @returns {string}
+ */
+export function kstTodayYmd() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+}
+
+/**
+ * 오늘(KST) 해당 친구에게 무료 선물 기록이 있는지
+ * @param {string} fromUid
+ * @param {string} toUid
+ */
+export function hasSentFreeToday(fromUid, toUid) {
+  const db = getDb();
+  const sentDate = kstTodayYmd();
+  const row = db
+    .prepare(
+      `SELECT 1 AS x FROM daily_free_hearts WHERE fromUid = ? AND toUid = ? AND sentDate = ?`,
+    )
+    .get(fromUid, toUid, sentDate);
+  return Boolean(row);
+}
+
+/**
+ * 무료 선물 1회 기록 (UNIQUE 위반 시 false)
+ * @param {string} fromUid
+ * @param {string} toUid
+ * @returns {boolean} 새 행이 들어갔으면 true
+ */
+export function recordFreeSend(fromUid, toUid) {
+  const db = getDb();
+  const sentDate = kstTodayYmd();
+  const r = db
+    .prepare(
+      `INSERT OR IGNORE INTO daily_free_hearts (fromUid, toUid, sentDate) VALUES (?, ?, ?)`,
+    )
+    .run(fromUid, toUid, sentDate);
+  return r.changes > 0;
+}
+
+/**
  * @param {string} uid
  * @returns {{ uid: string, balance: number }}
  */

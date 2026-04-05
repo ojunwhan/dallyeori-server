@@ -46,6 +46,13 @@ export function getDb() {
       createdAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_heart_tx_uid ON heart_transactions(uid);
+    CREATE TABLE IF NOT EXISTS daily_free_hearts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fromUid TEXT NOT NULL,
+      toUid TEXT NOT NULL,
+      sentDate TEXT NOT NULL,
+      UNIQUE(fromUid, toUid, sentDate)
+    );
   `);
   return _db;
 }
