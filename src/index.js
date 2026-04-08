@@ -33,6 +33,12 @@ import {
 
 const PORT = Number(process.env.PORT) || 3100;
 
+/** 클라이언트/게이트웨이에서 slot 이 문자열로 올 수 있음 — 엄격 비교 실패 시 raceJoin·tap 전부 무시되던 버그 방지 */
+function normalizePlayerSlot(slot) {
+  const n = Number(slot);
+  return n === 0 || n === 1 ? n : null;
+}
+
 /** @returns {string[]} */
 function parseAllowedOrigins() {
   const raw = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
@@ -450,8 +456,8 @@ io.on('connection', (socket) => {
     if (!room) return;
     const rid = matchmaker.socketRoom.get(socket.id);
     if (rid !== roomId) return;
-    const slot = payload?.slot;
-    if (slot !== 0 && slot !== 1) return;
+    const slot = normalizePlayerSlot(payload?.slot);
+    if (slot == null) return;
     room.playerJoined(slot);
     room.syncClient(socket);
   });
@@ -498,8 +504,8 @@ io.on('connection', (socket) => {
       console.log('[server] tap ignored: room mismatch', { socketId: socket.id, rid, roomId });
       return;
     }
-    const slot = payload?.slot;
-    if (slot !== 0 && slot !== 1) {
+    const slot = normalizePlayerSlot(payload?.slot);
+    if (slot == null) {
       console.log('[server] tap ignored: bad slot', socket.id, payload);
       return;
     }
