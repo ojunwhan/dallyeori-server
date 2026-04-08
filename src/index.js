@@ -456,6 +456,31 @@ io.on('connection', (socket) => {
     room.syncClient(socket);
   });
 
+  /** 경기 엔딩 UI(경기장)에 있을 때만 한판더 수신 가능 */
+  socket.on('raceEndingEntered', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const roomId =
+        payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
+      if (!roomId) return;
+      socket.data.rematchArenaRoomId = roomId;
+    } catch (e) {
+      console.warn('[raceEndingEntered] error', e);
+    }
+  });
+
+  socket.on('raceEndingLeft', (payload) => {
+    try {
+      const roomId =
+        payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
+      if (!roomId || socket.data.rematchArenaRoomId === roomId) {
+        socket.data.rematchArenaRoomId = null;
+      }
+    } catch (e) {
+      console.warn('[raceEndingLeft] error', e);
+    }
+  });
+
   socket.on('tap', (payload) => {
     const roomId = payload?.roomId;
     const foot = payload?.foot;
@@ -658,8 +683,18 @@ io.on('connection', (socket) => {
       if (socket.data.qrGuest) return;
       const targetUid =
         payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      const roomId =
+        payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid) return;
+      if (!roomId) {
+        socket.emit('rematchUnavailable', { reason: 'no_room' });
+        return;
+      }
+      if (socket.data.rematchArenaRoomId !== roomId) {
+        socket.emit('rematchUnavailable', { reason: 'not_in_ending' });
+        return;
+      }
       const profRaw =
         payload && typeof payload === 'object' && payload.profile && typeof payload.profile === 'object'
           ? /** @type {Record<string, unknown>} */ (payload.profile)
@@ -673,7 +708,13 @@ io.on('connection', (socket) => {
       }
       const senderName =
         (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
-      for (const peer of getAllSocketsByUid(targetUid)) {
+      const peers = getAllSocketsByUid(targetUid).filter((s) => s.connected);
+      const eligible = peers.filter((s) => s.data.rematchArenaRoomId === roomId);
+      if (eligible.length === 0) {
+        socket.emit('rematchUnavailable', { reason: 'peer_left' });
+        return;
+      }
+      for (const peer of eligible) {
         peer.emit('receiveRematch', { senderUid: fromUid, senderName });
       }
     } catch (e) {
@@ -783,6 +824,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    try {
+      socket.data.rematchArenaRoomId = null;
+    } catch {
+      /* ignore */
+    }
     unregisterUidSocket(socket.data.uid, socket.id);
     console.log('[socket] uid unregistered', socket.data.uid, '←', socket.id);
     qrMatch.onDisconnect(socket);
