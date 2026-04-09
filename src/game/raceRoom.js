@@ -97,55 +97,68 @@ export class RaceRoom {
   }
 
   /**
-   * 봇전 리매치: sendRematch 시 상대 소켓이 없어 peer_left 나기 전에 처리.
-   * index.js sendRematch 다음 리스너의 rematchUnavailable 1회만 억제.
+   * sendRematch(index) — 상대가 봇이면 peer_left 없이 같은 방에서 재시작.
    * @param {import('socket.io').Socket} socket
+   * @param {unknown} payload
+   * @returns {boolean} 처리했으면 true
    */
-  _ensureHumanBotRematchHooks(socket) {
-    if (this.botSlot < 0) return;
+  handleBotRematchFromHuman(socket, payload) {
+    console.log('[RaceRoom] handleBotRematchFromHuman enter', {
+      innerRoomId: this.roomId,
+      phase: this.phase,
+      botSlot: this.botSlot,
+    });
+    if (this.botSlot < 0) {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: not bot room');
+      return false;
+    }
+    if (this.phase !== 'done') {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: phase', this.phase);
+      return false;
+    }
+    const roomId =
+      payload && typeof payload === 'object' && typeof payload.roomId === 'string'
+        ? payload.roomId.trim()
+        : '';
+    const targetUid =
+      payload && typeof payload === 'object' && typeof payload.targetUid === 'string'
+        ? payload.targetUid
+        : '';
+    if (!roomId || roomId !== this.roomId || !targetUid) {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: payload room/target', {
+        roomId,
+        targetUid,
+      });
+      return false;
+    }
+    const botE = this.entries[this.botSlot];
+    if (!botE || !botE.isBot || targetUid !== botE.uid) {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: bot uid', {
+        targetUid,
+        botUid: botE?.uid,
+        isBot: botE?.isBot,
+      });
+      return false;
+    }
     const humanSlot = this.botSlot === 0 ? 1 : 0;
-    const he = this.entries[humanSlot];
-    if (!he || he.isBot) return;
-    if (String(socket.data?.uid || '') !== String(he.uid || '')) return;
-
-    if (!socket.data._raceRoomEmitWrapped) {
-      socket.data._raceRoomEmitWrapped = true;
-      const origEmit = socket.emit.bind(socket);
-      socket.emit = (ev, ...args) => {
-        if (ev === 'rematchUnavailable' && socket.data._raceRoomSuppressRematchUnavailable) {
-          socket.data._raceRoomSuppressRematchUnavailable = false;
-          return true;
-        }
-        return origEmit(ev, ...args);
-      };
+    const hum = this.entries[humanSlot];
+    if (!hum || hum.isBot) {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: human entry');
+      return false;
+    }
+    if (String(socket.data?.uid || '') !== String(hum.uid || '')) {
+      console.log('[RaceRoom] handleBotRematchFromHuman skip: uid', {
+        socketUid: socket.data?.uid,
+        humanUid: hum.uid,
+      });
+      return false;
     }
 
-    if (socket.data._raceRoomBotRematchHooked === this.roomId) return;
-    socket.data._raceRoomBotRematchHooked = this.roomId;
-
-    const room = this;
-    socket.prependListener('sendRematch', function raceRoomBotRematchFirst(payload) {
-      try {
-        if (socket.data.qrGuest) return;
-        if (room.phase !== 'done' || room.botSlot < 0) return;
-        const roomId =
-          payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
-        const targetUid =
-          payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
-        if (!roomId || roomId !== room.roomId) return;
-        const botE = room.entries[room.botSlot];
-        if (!botE || !targetUid || targetUid !== botE.uid) return;
-        const hSlot = room.botSlot === 0 ? 1 : 0;
-        const hum = room.entries[hSlot];
-        if (!hum || hum.isBot) return;
-        if (String(socket.data?.uid || '') !== String(hum.uid || '')) return;
-
-        socket.data._raceRoomSuppressRematchUnavailable = true;
-        room._restartRaceWithNewRandomBot(hSlot, socket);
-      } catch (e) {
-        console.warn('[RaceRoom] bot rematch hook', e);
-      }
+    console.log('[RaceRoom] handleBotRematchFromHuman OK → _restartRaceWithNewRandomBot', {
+      humanSlot,
     });
+    this._restartRaceWithNewRandomBot(humanSlot, socket);
+    return true;
   }
 
   /**
@@ -154,6 +167,10 @@ export class RaceRoom {
    * @param {import('socket.io').Socket} humanSocket
    */
   _restartRaceWithNewRandomBot(humanSlot, humanSocket) {
+    console.log('[RaceRoom] _restartRaceWithNewRandomBot start', {
+      roomId: this.roomId,
+      humanSlot,
+    });
     const prof = randomBotProfile();
     const botSlot = this.botSlot;
     this.entries[botSlot] = {
@@ -392,6 +409,7 @@ export class RaceRoom {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+    this.botScheduler = null;
     const wallT =
       this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
 

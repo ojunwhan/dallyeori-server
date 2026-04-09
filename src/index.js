@@ -754,6 +754,17 @@ io.on('connection', (socket) => {
           console.warn('[sendRematch] profile merge', e);
         }
       }
+      const room = matchmaker.getRoom(roomId);
+      console.log('[sendRematch] room lookup', {
+        roomId,
+        hasRoom: !!room,
+        phase: room?.phase,
+        botSlot: room?.botSlot,
+      });
+      if (room && room.handleBotRematchFromHuman(socket, payload)) {
+        console.log('[sendRematch] bot rematch handled by RaceRoom, skip peer relay');
+        return;
+      }
       const senderName =
         (socket.data.displayName && String(socket.data.displayName).trim()) || fromUid;
       const peers = getAllSocketsByUid(targetUid).filter((s) => s.connected);
