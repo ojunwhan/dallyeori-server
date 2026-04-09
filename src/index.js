@@ -460,7 +460,11 @@ io.on('connection', (socket) => {
       payload && typeof payload.uid === 'string' ? payload.uid.trim() : '';
     const authUid = socket.data?.uid;
     if (payloadUid && authUid && payloadUid !== authUid) {
-      console.warn('[raceJoin] uid mismatch (payload vs socket)', socket.id);
+      console.error('[raceJoin] uid mismatch', {
+        payloadUid,
+        socketUid: authUid,
+        socketId: socket.id,
+      });
       return;
     }
     if (payloadUid && room.slotPlayerUids && room.slotPlayerUids[slot] != null) {
