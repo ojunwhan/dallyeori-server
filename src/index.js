@@ -454,10 +454,25 @@ io.on('connection', (socket) => {
     if (!roomId) return;
     const room = matchmaker.getRoom(roomId);
     if (!room) return;
-    const rid = matchmaker.socketRoom.get(socket.id);
-    if (rid !== roomId) return;
     const slot = normalizePlayerSlot(payload?.slot);
     if (slot == null) return;
+    const payloadUid =
+      payload && typeof payload.uid === 'string' ? payload.uid.trim() : '';
+    const authUid = socket.data?.uid;
+    if (payloadUid && authUid && payloadUid !== authUid) {
+      console.warn('[raceJoin] uid mismatch (payload vs socket)', socket.id);
+      return;
+    }
+    if (payloadUid && room.slotPlayerUids && room.slotPlayerUids[slot] != null) {
+      if (room.slotPlayerUids[slot] !== payloadUid) {
+        console.warn('[raceJoin] uid mismatch (payload vs room slot)', socket.id);
+        return;
+      }
+    }
+    const rid = matchmaker.socketRoom.get(socket.id);
+    if (rid !== roomId && !matchmaker.rebindRaceSocket(roomId, slot, socket)) {
+      return;
+    }
     room.playerJoined(slot);
     room.syncClient(socket);
   });
@@ -470,8 +485,15 @@ io.on('connection', (socket) => {
       if (!roomId) return;
       const room = matchmaker.getRoom(roomId);
       if (!room) return;
-      const rid = matchmaker.socketRoom.get(socket.id);
-      if (rid !== roomId) return;
+      const slotHint = normalizePlayerSlot(payload?.slot);
+      let bound = matchmaker.socketRoom.get(socket.id) === roomId;
+      if (!bound && slotHint != null) {
+        bound = matchmaker.rebindRaceSocket(roomId, slotHint, socket);
+      }
+      if (!bound) {
+        bound = matchmaker.rebindRaceSocket(roomId, 0, socket) || matchmaker.rebindRaceSocket(roomId, 1, socket);
+      }
+      if (!bound) return;
       room.syncClient(socket);
     } catch (e) {
       console.warn('[requestRaceSync]', e);
@@ -515,14 +537,14 @@ io.on('connection', (socket) => {
       console.log('[server] tap ignored: no room', socket.id, roomId);
       return;
     }
-    const rid = matchmaker.socketRoom.get(socket.id);
-    if (rid !== roomId) {
-      console.log('[server] tap ignored: room mismatch', { socketId: socket.id, rid, roomId });
-      return;
-    }
     const slot = normalizePlayerSlot(payload?.slot);
     if (slot == null) {
       console.log('[server] tap ignored: bad slot', socket.id, payload);
+      return;
+    }
+    const rid = matchmaker.socketRoom.get(socket.id);
+    if (rid !== roomId && !matchmaker.rebindRaceSocket(roomId, slot, socket)) {
+      console.log('[server] tap ignored: room mismatch', { socketId: socket.id, rid, roomId });
       return;
     }
     room.onTap(slot, foot);

@@ -49,6 +49,11 @@ export class RaceRoom {
     this.terrain = getTerrain(this.terrainKey);
     this.ducks = [createDuck(), createDuck()];
     this.entries = [a, b];
+    /** 슬롯별 휴먼 uid (재연결 시 uid+slot 검증). 봇 슬롯은 null */
+    this.slotPlayerUids = [
+      a.isBot ? null : typeof a.uid === 'string' ? a.uid : null,
+      b.isBot ? null : typeof b.uid === 'string' ? b.uid : null,
+    ];
     this.joined = new Set();
     if (a.isBot) this.joined.add(0);
     if (b.isBot) this.joined.add(1);
@@ -101,7 +106,10 @@ export class RaceRoom {
     counts.forEach((count, i) => {
       const tid = setTimeout(() => {
         if (this.phase !== 'pending_start') return;
-        this.io.to(this.channel).emit('countdown', { count });
+        this.io.to(this.channel).emit('countdown', {
+          count,
+          startAt: this.countdownStartedAt,
+        });
         if (count === 0) {
           const tidGo = setTimeout(() => {
             if (this.phase === 'pending_start') this.beginRacing();
@@ -122,7 +130,11 @@ export class RaceRoom {
       const elapsed = Date.now() - this.countdownStartedAt;
       const idx = Math.min(3, Math.floor(elapsed / 1000));
       const counts = [3, 2, 1, 0];
-      socket.emit('countdown', { count: counts[idx], sync: true });
+      socket.emit('countdown', {
+        count: counts[idx],
+        sync: true,
+        startAt: this.countdownStartedAt,
+      });
       return;
     }
     if (this.phase === 'racing') {

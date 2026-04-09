@@ -328,4 +328,40 @@ export class Matchmaker {
   getRoom(roomId) {
     return this.rooms.get(roomId);
   }
+
+  /**
+   * Socket.IO 재연결 시 id 가 바뀌면 socketRoom 에 없어 raceJoin·tap 이 전부 막힘 — uid+slot 으로 엔트리 소켓 갱신
+   * @param {string} roomId
+   * @param {0|1} slot
+   * @param {import('socket.io').Socket} socket
+   * @returns {boolean}
+   */
+  rebindRaceSocket(roomId, slot, socket) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    const uid = socket.data?.uid;
+    if (!uid || typeof uid !== 'string') return false;
+    const mapped = room.slotPlayerUids && room.slotPlayerUids[slot];
+    if (mapped != null && mapped !== uid) return false;
+    const e = room.entries[slot];
+    if (!e || e.isBot || e.uid !== uid) return false;
+    const oldSock = e.socket;
+    if (oldSock && oldSock.id !== socket.id) {
+      this.socketRoom.delete(oldSock.id);
+      try {
+        oldSock.leave(room.channel);
+      } catch {
+        /* ignore */
+      }
+      try {
+        if (oldSock.connected) oldSock.disconnect(true);
+      } catch {
+        /* ignore */
+      }
+    }
+    e.socket = socket;
+    this.socketRoom.set(socket.id, roomId);
+    room.attachSocket(socket);
+    return true;
+  }
 }
