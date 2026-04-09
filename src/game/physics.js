@@ -191,6 +191,8 @@ export function duckToWire(duck, raceT) {
     lateralVelocity: 0,
     dirA: duck.dirA,
     spinAngle: duck.spinAngle,
+    /** 클라 상대 다리·3D 스텝 — peerTap 유실 시에도 동기화 */
+    lastFoot: duck.lastFoot,
     isSpinning: Math.abs(duck.spinAngle) > 0.08,
     isFallen: raceT < duck.fallenUntil,
     isStumbling: Boolean(duck.stumble),
