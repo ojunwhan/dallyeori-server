@@ -8,7 +8,7 @@ import {
   normalizeTerrainKey,
   stepDuck,
 } from './physics.js';
-import { createBotTapScheduler } from './botPlayer.js';
+import { createBotTapScheduler, randomBotProfile } from './botPlayer.js';
 import { addHearts, consumeHearts, getBalance } from '../db/heartStore.js';
 
 const TICK_MS = 16;
@@ -94,6 +94,130 @@ export class RaceRoom {
       clearTimeout(t);
     }
     this._countdownTimers = [];
+  }
+
+  /**
+   * 봇전 리매치: sendRematch 시 상대 소켓이 없어 peer_left 나기 전에 처리.
+   * index.js sendRematch 다음 리스너의 rematchUnavailable 1회만 억제.
+   * @param {import('socket.io').Socket} socket
+   */
+  _ensureHumanBotRematchHooks(socket) {
+    if (this.botSlot < 0) return;
+    const humanSlot = this.botSlot === 0 ? 1 : 0;
+    const he = this.entries[humanSlot];
+    if (!he || he.isBot) return;
+    if (String(socket.data?.uid || '') !== String(he.uid || '')) return;
+
+    if (!socket.data._raceRoomEmitWrapped) {
+      socket.data._raceRoomEmitWrapped = true;
+      const origEmit = socket.emit.bind(socket);
+      socket.emit = (ev, ...args) => {
+        if (ev === 'rematchUnavailable' && socket.data._raceRoomSuppressRematchUnavailable) {
+          socket.data._raceRoomSuppressRematchUnavailable = false;
+          return true;
+        }
+        return origEmit(ev, ...args);
+      };
+    }
+
+    if (socket.data._raceRoomBotRematchHooked === this.roomId) return;
+    socket.data._raceRoomBotRematchHooked = this.roomId;
+
+    const room = this;
+    socket.prependListener('sendRematch', function raceRoomBotRematchFirst(payload) {
+      try {
+        if (socket.data.qrGuest) return;
+        if (room.phase !== 'done' || room.botSlot < 0) return;
+        const roomId =
+          payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
+        const targetUid =
+          payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+        if (!roomId || roomId !== room.roomId) return;
+        const botE = room.entries[room.botSlot];
+        if (!botE || !targetUid || targetUid !== botE.uid) return;
+        const hSlot = room.botSlot === 0 ? 1 : 0;
+        const hum = room.entries[hSlot];
+        if (!hum || hum.isBot) return;
+        if (String(socket.data?.uid || '') !== String(hum.uid || '')) return;
+
+        socket.data._raceRoomSuppressRematchUnavailable = true;
+        room._restartRaceWithNewRandomBot(hSlot, socket);
+      } catch (e) {
+        console.warn('[RaceRoom] bot rematch hook', e);
+      }
+    });
+  }
+
+  /**
+   * 한판더 수락과 동등: 새 봇 프로필·스케줄러, 같은 roomId 로 카운트다운부터.
+   * @param {0|1} humanSlot
+   * @param {import('socket.io').Socket} humanSocket
+   */
+  _restartRaceWithNewRandomBot(humanSlot, humanSocket) {
+    const prof = randomBotProfile();
+    const botSlot = this.botSlot;
+    this.entries[botSlot] = {
+      socket: null,
+      uid: prof.userId,
+      profile: {
+        userId: prof.userId,
+        nickname: prof.nickname,
+        photoURL: prof.profilePhotoURL || '',
+        duckId: prof.duckId,
+        wins: prof.wins,
+        losses: prof.losses,
+        draws: prof.draws,
+      },
+      isBot: true,
+      slot: botSlot,
+    };
+
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this._clearCountdownTimers();
+    this.ducks = [createDuck(), createDuck()];
+    this.botScheduler =
+      botSlot === 1
+        ? createBotTapScheduler(this.terrainKey, (foot, t) => {
+            applyTap(this.ducks[1], foot, this.terrain, t, {
+              cpuMul: 0.92,
+              sameFootImpulseScale: 0.38,
+            });
+          })
+        : createBotTapScheduler(this.terrainKey, (foot, t) => {
+            applyTap(this.ducks[0], foot, this.terrain, t, {
+              cpuMul: 0.92,
+              sameFootImpulseScale: 0.38,
+            });
+          });
+
+    this.raceT = 0;
+    this.raceStartAt = null;
+    this.countdownStartedAt = null;
+    this._lastRaceResultPayload = null;
+    this._dbgRaceTickLogBucket = undefined;
+
+    this.phase = 'pending_start';
+    this.pendingStartAt = Date.now();
+    this.joined = new Set([0, 1]);
+
+    const humEntry = this.entries[humanSlot];
+    if (humEntry && !humEntry.isBot) {
+      humEntry.socket = humanSocket;
+    }
+
+    humanSocket.emit('matchFound', {
+      roomId: this.roomId,
+      slot: humanSlot,
+      terrain: this.terrainKey,
+      myDuckId: (humEntry && humEntry.profile && humEntry.profile.duckId) || 'bori',
+      opponent: profileToOpponent(this.entries[botSlot].profile),
+    });
+
+    this.io.to(this.channel).emit('race-matched', { roomId: this.roomId });
+    this._startServerCountdown();
   }
 
   /**
@@ -228,7 +352,10 @@ export class RaceRoom {
       this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT + dt;
     this.raceT = wallT;
     if (this.botScheduler != null && this.botSlot >= 0) {
-      this.botScheduler.tick(dt, this.raceT);
+      const humanSlot = this.botSlot === 0 ? 1 : 0;
+      const humanDist = this.ducks[humanSlot].dist;
+      const botDist = this.ducks[this.botSlot].dist;
+      this.botScheduler.tick(dt, this.raceT, humanDist, botDist);
     }
     stepDuck(this.ducks[0], dt, this.terrain, this.raceT, this.botSlot === 0);
     stepDuck(this.ducks[1], dt, this.terrain, this.raceT, this.botSlot === 1);
