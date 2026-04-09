@@ -4,6 +4,8 @@
 
 export const TRACK_DISTANCE_M = 70;
 export const RACE_TIME_LIMIT_SEC = 13;
+/** 클라 constants.TAP_STRIDE_M(60cm) 과 동일 — 탭 1회 = 전진 1보, 속도 적분 없음 */
+export const TAP_STRIDE_M = 0.6;
 
 export const RACE_ENGINE_PHYSICS = Object.freeze({
   DUCK_MASS: 3.5,
@@ -99,18 +101,17 @@ export function createDuck() {
  */
 export function applyTap(duck, foot, terrain, raceT, opt = {}) {
   const stumbleScale = opt.stumbleScale ?? 1;
-  let imp = (PH.TAP_FORCE / PH.DUCK_MASS) * terrain.friction * stumbleScale;
   const sameFoot = duck.lastFoot === foot;
-  if (duck.stumble) imp *= 0.45;
+  let stride = TAP_STRIDE_M * stumbleScale;
+  if (duck.stumble) stride *= 0.45;
   if (sameFoot) {
     if (foot === 'L') duck.dirA -= PH.SAME_FOOT_ANGLE;
     else duck.dirA += PH.SAME_FOOT_ANGLE;
     if (terrain.slipOnSameFoot) {
       duck.spinAngle += terrain.spinRate || 0.35;
     }
-    duck.v += imp * (opt.sameFootImpulseScale ?? 0.38);
+    stride *= opt.sameFootImpulseScale ?? 0.38;
   } else {
-    duck.v += imp;
     const r = PH.ANGLE_RECOVERY;
     if (duck.dirA > r) duck.dirA -= r;
     else if (duck.dirA < -r) duck.dirA += r;
@@ -119,10 +120,15 @@ export function applyTap(duck, foot, terrain, raceT, opt = {}) {
       duck.spinAngle = moveTowardVal(duck.spinAngle, 0, terrain.spinRecovery);
     }
   }
-  duck.v = Math.max(0, Math.min(PH.MAX_SPEED, duck.v));
-  duck.spd = duck.v;
   duck.dirA = Math.max(-DIR_A_LIMIT, Math.min(DIR_A_LIMIT, duck.dirA));
   duck.spinAngle = Math.max(-DIR_A_LIMIT, Math.min(DIR_A_LIMIT, duck.spinAngle));
+  const ca = Math.cos(duck.dirA);
+  const sa = Math.sin(duck.dirA);
+  duck.dist += stride * ca;
+  duck.lateral += stride * sa;
+  /** 가속 적분 없음 — 표시·스텀블 판정용으로만 짧은 스칼라 유지 */
+  duck.v = Math.min(PH.MAX_SPEED, stride * 8);
+  duck.spd = duck.v;
   duck.lastFoot = foot;
   duck.taps += 1;
   duck.lastTapRaceT = raceT;
@@ -143,7 +149,6 @@ export function stepDuck(duck, dt, terrain, raceT, isCpu) {
   }
   const spinRec = terrain.spinRecovery != null ? terrain.spinRecovery : 0.06;
   duck.spinAngle = moveTowardVal(duck.spinAngle, 0, spinRec * dt * 8);
-  const effA = duck.dirA + 0.45 * duck.spinAngle * Math.sin(raceT * 3);
   const prevV = duck.v;
   const dt60 = 60 * dt;
   duck.v *= Math.pow(terrain.slideDecay, dt60);
@@ -161,10 +166,7 @@ export function stepDuck(duck, dt, terrain, raceT, isCpu) {
     if (prevV > PH.STUMBLE_THRESHOLD && gap > PH.STUMBLE_GAP) duck.stumble = 1;
   }
   duck.v = Math.max(0, Math.min(PH.MAX_SPEED, duck.v));
-  const fwd = duck.v * Math.cos(effA) * dt;
-  const lat = duck.v * Math.sin(effA) * dt;
-  duck.dist += fwd;
-  duck.lateral += lat;
+  /** 전진·횡이동은 applyTap(한 걸음)에서만 반영 — 탭 속도 = 걸음 속도 */
   duck.spd = duck.v;
   if (!isCpu && terrain.fallThreshold != null && Number.isFinite(terrain.fallThreshold)) {
     if (Math.abs(duck.lateral) > terrain.fallThreshold) {
