@@ -79,6 +79,9 @@ export class RaceRoom {
     /** 5초 단위 raceTick 디버그 로그용 */
     /** @type {number | undefined} */
     this._dbgRaceTickLogBucket = undefined;
+    /** requestRaceSync 시 phase===done 이면 마지막 결과만 재전송 */
+    /** @type {object | null} */
+    this._lastRaceResultPayload = null;
   }
 
   _clearCountdownTimers() {
@@ -132,6 +135,10 @@ export class RaceRoom {
         duckToWire(this.ducks[1], this.raceT),
       ];
       socket.emit('raceTick', { raceT: wallT, players });
+      return;
+    }
+    if (this.phase === 'done' && this._lastRaceResultPayload) {
+      socket.emit('raceResult', this._lastRaceResultPayload);
     }
   }
 
@@ -284,6 +291,7 @@ export class RaceRoom {
       taps: [this.ducks[0].taps, this.ducks[1].taps],
       hearts,
     };
+    this._lastRaceResultPayload = payload;
     this.io.to(this.channel).emit('raceResult', payload);
   }
 

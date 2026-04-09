@@ -462,6 +462,22 @@ io.on('connection', (socket) => {
     room.syncClient(socket);
   });
 
+  /** 카운트다운/레이스 UI 멈춤 시 서버 상태 재요청 (모바일 이벤트 유실 복구) */
+  socket.on('requestRaceSync', (payload) => {
+    try {
+      const roomId =
+        payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
+      if (!roomId) return;
+      const room = matchmaker.getRoom(roomId);
+      if (!room) return;
+      const rid = matchmaker.socketRoom.get(socket.id);
+      if (rid !== roomId) return;
+      room.syncClient(socket);
+    } catch (e) {
+      console.warn('[requestRaceSync]', e);
+    }
+  });
+
   /** 경기 엔딩 UI(경기장)에 있을 때만 한판더 수신 가능 */
   socket.on('raceEndingEntered', (payload) => {
     try {
