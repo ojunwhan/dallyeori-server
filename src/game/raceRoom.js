@@ -63,13 +63,11 @@ export class RaceRoom {
     /** @type {ReturnType<typeof setInterval> | null} */
     this.tickTimer = null;
     /** @type {ReturnType<typeof createBotTapScheduler> | null} */
-    this.botScheduler = b.isBot ? createBotTapScheduler(this.terrainKey, (foot, t) => {
-      applyTap(this.ducks[1], foot, this.terrain, t, { cpuMul: 0.92, sameFootImpulseScale: 0.38 });
-    }) : a.isBot
-      ? createBotTapScheduler(this.terrainKey, (foot, t) => {
-          applyTap(this.ducks[0], foot, this.terrain, t, { cpuMul: 0.92, sameFootImpulseScale: 0.38 });
-        })
-      : null;
+    this.botScheduler = b.isBot
+      ? createBotTapScheduler(this.terrainKey, (foot, t) => this._botApplyTap(foot, t))
+      : a.isBot
+        ? createBotTapScheduler(this.terrainKey, (foot, t) => this._botApplyTap(foot, t))
+        : null;
     this.botSlot = a.isBot ? 0 : b.isBot ? 1 : -1;
     /** @type {number | null} */
     this.pendingStartAt = null;
@@ -94,6 +92,32 @@ export class RaceRoom {
       clearTimeout(t);
     }
     this._countdownTimers = [];
+  }
+
+  /**
+   * 봇 스케줄러 탭 — 물리 적용 후 휴먼 클라이언트에 peerTap(다리 애니만) 전달
+   * @param {'L'|'R'} foot
+   * @param {number} raceT
+   */
+  _botApplyTap(foot, raceT) {
+    if (this.botSlot < 0) return;
+    applyTap(this.ducks[this.botSlot], foot, this.terrain, raceT, {
+      cpuMul: 0.92,
+      sameFootImpulseScale: 0.38,
+    });
+    this._emitPeerTapFromBotForHumanVisual(foot);
+  }
+
+  /**
+   * @param {'L'|'R'} foot
+   */
+  _emitPeerTapFromBotForHumanVisual(foot) {
+    if (this.phase !== 'racing' || this.botSlot < 0) return;
+    const humanSlot = this.botSlot === 0 ? 1 : 0;
+    const hum = this.entries[humanSlot];
+    if (!hum?.socket || hum.isBot) return;
+    const peerFoot = foot === 'R' ? 'right' : 'left';
+    hum.socket.emit('peerTap', { slot: this.botSlot, foot: peerFoot });
   }
 
   /**
@@ -195,20 +219,9 @@ export class RaceRoom {
     }
     this._clearCountdownTimers();
     this.ducks = [createDuck(), createDuck()];
-    this.botScheduler =
-      botSlot === 1
-        ? createBotTapScheduler(this.terrainKey, (foot, t) => {
-            applyTap(this.ducks[1], foot, this.terrain, t, {
-              cpuMul: 0.92,
-              sameFootImpulseScale: 0.38,
-            });
-          })
-        : createBotTapScheduler(this.terrainKey, (foot, t) => {
-            applyTap(this.ducks[0], foot, this.terrain, t, {
-              cpuMul: 0.92,
-              sameFootImpulseScale: 0.38,
-            });
-          });
+    this.botScheduler = createBotTapScheduler(this.terrainKey, (foot, t) =>
+      this._botApplyTap(foot, t),
+    );
 
     this.raceT = 0;
     this.raceStartAt = null;
