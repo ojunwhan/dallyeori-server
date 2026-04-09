@@ -263,6 +263,8 @@ export class RaceRoom {
         this.io.to(this.channel).emit('countdown', {
           count,
           startAt: this.countdownStartedAt,
+          /** 폰 시계 편차 보정용 — 클라가 (serverNow - Date.now()) 로 오프셋 추정 */
+          serverNow: Date.now(),
         });
         if (count === 0) {
           const tidGo = setTimeout(() => {
@@ -288,6 +290,7 @@ export class RaceRoom {
         count: counts[idx],
         sync: true,
         startAt: this.countdownStartedAt,
+        serverNow: Date.now(),
       });
       return;
     }
