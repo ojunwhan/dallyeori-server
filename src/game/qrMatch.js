@@ -33,12 +33,32 @@ export class QrMatchManager {
     return String(raw).split(',')[0].trim().replace(/\/$/, '');
   }
 
-  /** @param {string} uid */
-  findHostSocket(uid) {
-    for (const [, sock] of this.io.sockets.sockets) {
-      if (sock.data?.uid === uid && !sock.data?.qrGuest) return sock;
+  /**
+   * 같은 uid 다중 탭·기기 시 Map 순회만 하면 "첫 번째" 소켓에 matchFound 가 가고 QR 탭은 영원히 대기함.
+   * 클라이언트가 보낸 socketId 를 우선하고, 없으면 connectedAt 이 가장 최근인 소켓을 고른다.
+   * @param {string} uid
+   * @param {string} [preferredSocketId]
+   */
+  findHostSocket(uid, preferredSocketId) {
+    if (preferredSocketId) {
+      const s = this.io.sockets.sockets.get(preferredSocketId);
+      if (s?.data?.uid === uid && !s.data?.qrGuest) return s;
     }
-    return null;
+    /** @type {import('socket.io').Socket | null} */
+    let best = null;
+    let bestAt = -1;
+    for (const [, sock] of this.io.sockets.sockets) {
+      if (sock.data?.uid !== uid || sock.data?.qrGuest) continue;
+      const at =
+        typeof sock.data.connectedAt === 'number' && Number.isFinite(sock.data.connectedAt)
+          ? sock.data.connectedAt
+          : 0;
+      if (at >= bestAt) {
+        bestAt = at;
+        best = sock;
+      }
+    }
+    return best;
   }
 
   /**
@@ -47,7 +67,11 @@ export class QrMatchManager {
    */
   createPending(authPayload, body) {
     const uid = authPayload.uid;
-    const hostSocket = this.findHostSocket(uid);
+    const sid =
+      body && typeof body.socketId === 'string' && body.socketId.trim()
+        ? body.socketId.trim()
+        : undefined;
+    const hostSocket = this.findHostSocket(uid, sid);
     if (!hostSocket) return { ok: false, status: 409, error: 'socket_offline' };
 
     this.cancelForSocket(hostSocket.id);
