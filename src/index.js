@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import authRoutes from './auth/index.js';
 import { getUserStorePath } from './auth/userStore.js';
-import { verifySessionToken } from './auth/session.js';
+import { verifySessionToken, signQrGuestToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
 import { normalizeTerrainKey } from './game/physics.js';
 import { QrMatchManager } from './game/qrMatch.js';
@@ -906,6 +906,22 @@ app.post('/api/qr-match/create', requireUserJwt, (req, res) => {
     qrUrl: r.qrUrl,
     guestToken: r.guestToken,
   });
+});
+
+app.get('/j/:matchCode', (req, res) => {
+  const { matchCode } = req.params;
+  if (!qrMatch.isPendingMatch(matchCode)) {
+    res
+      .status(410)
+      .type('html')
+      .send(
+        '<!DOCTYPE html><html lang="ko"><meta charset="utf-8"><title>QR</title><body><p>만료되었거나 잘못된 QR이에요.</p></body></html>',
+      );
+    return;
+  }
+  const t = signQrGuestToken(matchCode);
+  const base = qrMatch.qrClientBaseUrl();
+  res.redirect(302, `${base}/?qr=${encodeURIComponent(matchCode)}&t=${encodeURIComponent(t)}`);
 });
 
 app.get('/qr/:matchCode', (req, res) => {

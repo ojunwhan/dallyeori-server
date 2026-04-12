@@ -34,6 +34,23 @@ export class QrMatchManager {
   }
 
   /**
+   * QR에 인쇄되는 짧은 링크의 오리진 (이 서버의 `GET /j/:matchCode`가 붙는 공개 URL).
+   * 비우면 로컬 개발용으로 `http://localhost:{PORT}` 를 씁니다. 운영에서는 HTTPS 공개 도메인을 권장합니다.
+   */
+  qrShortJoinBaseUrl() {
+    const raw = process.env.QR_SHORT_JOIN_BASE || '';
+    const u = String(raw).split(',')[0].trim().replace(/\/$/, '');
+    if (u) return u;
+    const p = Number(process.env.PORT) || 3100;
+    return `http://localhost:${p}`;
+  }
+
+  /** @param {string} matchCode */
+  isPendingMatch(matchCode) {
+    return this.pending.has(String(matchCode));
+  }
+
+  /**
    * 같은 uid 다중 탭·기기 시 Map 순회만 하면 "첫 번째" 소켓에 matchFound 가 가고 QR 탭은 영원히 대기함.
    * 클라이언트가 보낸 socketId 를 우선하고, 없으면 connectedAt 이 가장 최근인 소켓을 고른다.
    * @param {string} uid
@@ -99,8 +116,8 @@ export class QrMatchManager {
     const timeoutId = setTimeout(() => this.expire(matchCode), QR_PENDING_MS);
     this.pending.set(matchCode, { hostSocket, hostProfile, terrain, timeoutId });
 
-    const base = this.qrClientBaseUrl();
-    const qrUrl = `${base}/?qr=${encodeURIComponent(matchCode)}&t=${encodeURIComponent(guestToken)}`;
+    const shortBase = this.qrShortJoinBaseUrl();
+    const qrUrl = `${shortBase}/j/${matchCode}`;
 
     return {
       ok: true,
