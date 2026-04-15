@@ -1,4 +1,5 @@
 import { getDb } from './database.js';
+import { getProfile } from './profileStore.js';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -71,6 +72,12 @@ export function searchUsersDiscovery(meUid, params) {
   const limit = Math.min(50, Math.max(1, Math.floor(Number(params.limit)) || 10));
   const onlineUids = params.onlineUids instanceof Set ? params.onlineUids : new Set();
 
+  const hasCountry = countryCode && /^[A-Z]{2}$/.test(countryCode);
+  const hasGender = gender === 'M' || gender === 'F';
+  if (!q && !hasCountry && !hasGender) {
+    return { users: [] };
+  }
+
   let sql = `SELECT uid, nickname, language, country_code AS countryCode, gender
              FROM user_profiles
              WHERE uid != ?
@@ -123,6 +130,59 @@ export function searchUsersDiscovery(meUid, params) {
 
   const slice = enriched.slice(offset, offset + limit);
   return { users: slice };
+}
+
+/**
+ * race_results 기준 최근 상대(중복 제거 최대 10), 프로필·친구 상태 포함
+ * @param {string} meUid
+ * @param {Set<string>} onlineUids
+ * @returns {{ uid: string, nickname: string, language: string, countryCode: string, gender: string | null, isOnline: boolean, isFriend: boolean, isRequested: boolean }[]}
+ */
+export function getRecentOpponents(meUid, onlineUids) {
+  const db = getDb();
+  const me = typeof meUid === 'string' ? meUid.trim() : '';
+  if (!me) return [];
+  const online = onlineUids instanceof Set ? onlineUids : new Set();
+
+  const rows = db
+    .prepare(
+      `SELECT opponent_uid AS uid, MAX(id) AS lastId
+       FROM race_results
+       WHERE player_uid = ?
+         AND opponent_uid IS NOT NULL
+         AND TRIM(opponent_uid) != ''
+       GROUP BY opponent_uid
+       ORDER BY lastId DESC
+       LIMIT 10`,
+    )
+    .all(me);
+
+  /** @type {{ uid: string, nickname: string, language: string, countryCode: string, gender: string | null, isOnline: boolean, isFriend: boolean, isRequested: boolean }[]} */
+  const out = [];
+  const latestNickStmt = db.prepare(
+    `SELECT opponent_nick FROM race_results WHERE player_uid = ? AND opponent_uid = ? ORDER BY id DESC LIMIT 1`,
+  );
+
+  for (const r of rows) {
+    const uid = String(r.uid);
+    const p = getProfile(uid);
+    if (!p) continue;
+    const ln = latestNickStmt.get(me, uid);
+    const nickFromRace =
+      ln && typeof ln.opponent_nick === 'string' ? String(ln.opponent_nick).trim() : '';
+    const nickname = p.nickname && String(p.nickname).trim() ? String(p.nickname) : nickFromRace || uid;
+    out.push({
+      uid,
+      nickname,
+      language: String(p.language ?? 'ko'),
+      countryCode: typeof p.countryCode === 'string' ? p.countryCode : '',
+      gender: p.gender === 'M' || p.gender === 'F' ? p.gender : null,
+      isOnline: online.has(uid),
+      isFriend: isAcceptedPair(db, me, uid),
+      isRequested: hasPendingOutgoing(db, me, uid),
+    });
+  }
+  return out;
 }
 
 /**

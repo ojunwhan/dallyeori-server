@@ -91,6 +91,7 @@ export function getDb() {
   `);
   runProfileMigrations(_db);
   runFriendMigrations(_db);
+  runRaceResultsMigrations(_db);
   return _db;
 }
 
@@ -118,6 +119,28 @@ function runFriendMigrations(db) {
     const msg = String(e && typeof e === 'object' && 'message' in e ? e.message : e);
     console.warn('[db] friends pair unique index:', msg);
   }
+}
+
+/**
+ * 경주 결과(최근 상대 API용)
+ * @param {import('better-sqlite3').Database} db
+ */
+function runRaceResultsMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS race_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      player_uid TEXT NOT NULL,
+      opponent_uid TEXT,
+      opponent_nick TEXT,
+      result TEXT,
+      my_distance REAL,
+      opponent_distance REAL,
+      duration REAL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_race_results_player ON race_results(player_uid);
+    CREATE INDEX IF NOT EXISTS idx_race_results_opponent ON race_results(opponent_uid);
+  `);
 }
 
 getDb();

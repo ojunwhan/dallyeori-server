@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifySessionToken } from '../auth/session.js';
-import { searchUsersDiscovery, createFriendRequest } from '../db/friendStore.js';
+import { searchUsersDiscovery, createFriendRequest, getRecentOpponents } from '../db/friendStore.js';
+import { insertRaceResult } from '../db/raceResultStore.js';
 
 /**
  * @param {() => Set<string>} getOnlineUids
@@ -52,6 +53,33 @@ export default function createApiV1SocialRouter(getOnlineUids) {
       res.json(users);
     } catch (e) {
       console.warn('[api/v1/users/search]', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.post('/race/result', requireUserJwt, (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const ins = insertRaceResult(req.authUser.uid, body);
+      if (!ins.ok) {
+        res.status(400).json({ error: ins.error || 'bad_request' });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.warn('[api/v1/race/result]', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.get('/friends/recent-opponents', requireUserJwt, (req, res) => {
+    try {
+      const me = req.authUser.uid;
+      const online = getOnlineUids();
+      const users = getRecentOpponents(me, online);
+      res.json(users);
+    } catch (e) {
+      console.warn('[api/v1/friends/recent-opponents]', e);
       res.status(500).json({ error: 'server_error' });
     }
   });
