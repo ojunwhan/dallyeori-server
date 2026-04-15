@@ -36,7 +36,7 @@ export function validateGender(raw) {
   }
   const g = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
   if (g === '') return { ok: true, value: null };
-  if (g === 'M' || g === 'F' || g === 'X') return { ok: true, value: g };
+  if (g === 'M' || g === 'F') return { ok: true, value: g };
   return { ok: false, code: 'bad_gender' };
 }
 
@@ -196,10 +196,7 @@ export function upsertProfile(uid, fields) {
   const countryCode =
     typeof fields.countryCode === 'string' ? fields.countryCode.trim().toUpperCase() : '';
   const genderNorm = fields.gender;
-  const gender =
-    genderNorm === 'M' || genderNorm === 'F' || genderNorm === 'X'
-      ? genderNorm
-      : null;
+  const gender = genderNorm === 'M' || genderNorm === 'F' ? genderNorm : null;
   const bioVal = fields.bio != null && String(fields.bio).trim() ? String(fields.bio).trim() : null;
 
   const db = getDb();
