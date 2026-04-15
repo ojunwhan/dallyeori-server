@@ -171,6 +171,41 @@ export function getProfile(uid) {
   };
 }
 
+/** 언어(주 태그) → 국가 alpha-2 — country_code 비어 있을 때 upsertProfile에서만 사용 */
+const LANGUAGE_TO_COUNTRY = {
+  ko: 'KR',
+  en: 'US',
+  ja: 'JP',
+  zh: 'CN',
+  vi: 'VN',
+  th: 'TH',
+  id: 'ID',
+  ms: 'MY',
+  tl: 'PH',
+  ru: 'RU',
+  es: 'ES',
+  pt: 'BR',
+  fr: 'FR',
+  de: 'DE',
+  ar: 'SA',
+  hi: 'IN',
+  my: 'MM',
+  km: 'KH',
+  ne: 'NP',
+  mn: 'MN',
+  uz: 'UZ',
+};
+
+/**
+ * @param {string} language BCP47 또는 주 태그만
+ * @returns {string} 추론 실패 시 ''
+ */
+function inferCountryCodeFromLanguage(language) {
+  if (!language || typeof language !== 'string') return '';
+  const base = language.trim().split('-')[0].toLowerCase();
+  return LANGUAGE_TO_COUNTRY[base] ?? '';
+}
+
 /**
  * @param {string} uid
  * @param {{
@@ -194,8 +229,14 @@ export function upsertProfile(uid, fields) {
     typeof fields.selectedDuckId === 'string' && fields.selectedDuckId.trim()
       ? fields.selectedDuckId.trim()
       : 'bori';
-  const countryCode =
-    typeof fields.countryCode === 'string' ? fields.countryCode.trim().toUpperCase() : '';
+  const ccRaw = fields.countryCode;
+  let countryCode = typeof ccRaw === 'string' ? ccRaw.trim().toUpperCase() : '';
+  const countryMissing =
+    ccRaw === null || ccRaw === undefined || (typeof ccRaw === 'string' && ccRaw.trim() === '');
+  if (countryMissing && lang) {
+    const inferred = inferCountryCodeFromLanguage(lang);
+    if (inferred) countryCode = inferred;
+  }
   const genderNorm = fields.gender;
   const gender = genderNorm === 'M' || genderNorm === 'F' ? genderNorm : null;
   const bioVal = fields.bio != null && String(fields.bio).trim() ? String(fields.bio).trim() : null;
