@@ -116,14 +116,16 @@ function sqliteDatetimeToIso(sqliteDt) {
 
 /**
  * @param {string} uid
- * @returns {boolean} ISO 국가 2자리가 채워졌는지 (서버 프로필 완료 조건)
+ * @returns {boolean} 닉네임·언어가 채워졌는지 (서버 프로필 완료 조건). countryCode는 선택.
  */
 export function isServerProfileComplete(uid) {
   if (!uid || typeof uid !== 'string') return false;
   const p = getProfile(uid);
   if (!p) return false;
-  const c = String(p.countryCode || '').trim().toUpperCase();
-  return /^[A-Z]{2}$/.test(c);
+  const nick = String(p.nickname ?? '').trim();
+  const lang = String(p.language ?? '').trim();
+  if (nick.length < 2 || !lang) return false;
+  return true;
 }
 
 /**
@@ -176,7 +178,7 @@ export function getProfile(uid) {
  *   photoURL?: string,
  *   language?: string,
  *   selectedDuckId?: string,
- *   countryCode?: string,
+ *   countryCode?: string, // 빈 문자열·자동 추론값 모두 허용
  *   gender?: string | null,
  *   bio?: string | null,
  * }} fields

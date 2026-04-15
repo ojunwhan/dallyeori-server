@@ -14,7 +14,10 @@ const router = Router();
 router.use(googleRoutes);
 router.use(kakaoRoutes);
 
-/** 프로필 설정 완료 → 서버에 기가입 표시 (기기 간 중복 가입 방지) + 선택 시 DB 프로필 upsert */
+/**
+ * 프로필 설정 완료 → 서버에 기가입 표시 (기기 간 중복 가입 방지) + 선택 시 DB 프로필 upsert.
+ * countryCode는 빈 문자열 허용(언어 기반 자동 추론 없음 등).
+ */
 router.post('/complete-profile', (req, res) => {
   const h = req.headers.authorization;
   if (!h?.startsWith('Bearer ')) {
