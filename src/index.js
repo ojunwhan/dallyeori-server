@@ -4,6 +4,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import authRoutes from './auth/index.js';
+import apiV1ProfileRouter from './routes/apiV1Profile.js';
 import { getUserStorePath } from './auth/userStore.js';
 import { verifySessionToken, signQrGuestToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
@@ -29,6 +30,7 @@ import {
   trySaveProfileFromBody,
   profileToClient,
   searchByNickname,
+  updateLastSeen,
 } from './db/profileStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
@@ -66,6 +68,7 @@ app.use(
 );
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/api/v1', apiV1ProfileRouter);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -390,6 +393,11 @@ io.on('connection', (socket) => {
   console.log('[socket] uid registered', socket.data.uid, '→', socket.id);
 
   if (!socket.data.qrGuest) {
+    try {
+      updateLastSeen(socket.data.uid);
+    } catch (e) {
+      console.warn('[socket] updateLastSeen on connect', e);
+    }
     const restored = qrMatch.rebindHostSocket(socket.data.uid, socket);
     if (restored?.ok) {
       socket.emit('qrSessionRestored', {
@@ -897,6 +905,13 @@ io.on('connection', (socket) => {
       socket.data.rematchArenaRoomId = null;
     } catch {
       /* ignore */
+    }
+    if (!socket.data.qrGuest) {
+      try {
+        updateLastSeen(socket.data.uid);
+      } catch (e) {
+        console.warn('[socket] updateLastSeen on disconnect', e);
+      }
     }
     unregisterUidSocket(socket.data.uid, socket.id);
     console.log('[socket] uid unregistered', socket.data.uid, '←', socket.id);

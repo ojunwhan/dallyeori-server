@@ -11,6 +11,31 @@ const DB_PATH = join(DATA_DIR, 'dallyeori.db');
 let _db = null;
 
 /**
+ * @param {import('better-sqlite3').Database} db
+ */
+function runProfileMigrations(db) {
+  const alters = [
+    `ALTER TABLE user_profiles ADD COLUMN country_code TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE user_profiles ADD COLUMN gender TEXT`,
+    `ALTER TABLE user_profiles ADD COLUMN bio TEXT`,
+    `ALTER TABLE user_profiles ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+  ];
+  for (const sql of alters) {
+    try {
+      db.prepare(sql).run();
+    } catch (e) {
+      const msg = String(e && typeof e === 'object' && 'message' in e ? e.message : e);
+      if (!msg.includes('duplicate column')) throw e;
+    }
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_profiles_country ON user_profiles(country_code);
+    CREATE INDEX IF NOT EXISTS idx_user_profiles_gender ON user_profiles(gender);
+    CREATE INDEX IF NOT EXISTS idx_user_profiles_last_seen ON user_profiles(last_seen_at);
+  `);
+}
+
+/**
  * @returns {import('better-sqlite3').Database}
  */
 export function getDb() {
@@ -64,6 +89,7 @@ export function getDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_nickname ON user_profiles(nickname COLLATE NOCASE);
   `);
+  runProfileMigrations(_db);
   return _db;
 }
 

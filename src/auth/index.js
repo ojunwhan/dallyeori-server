@@ -3,7 +3,12 @@ import googleRoutes from './google.js';
 import kakaoRoutes from './kakao.js';
 import { verifySessionToken } from './session.js';
 import { markProfileSetupComplete } from './userStore.js';
-import { getProfile, trySaveProfileFromBody, profileToClient } from '../db/profileStore.js';
+import {
+  getProfile,
+  trySaveProfileFromBody,
+  profileToClient,
+  isServerProfileComplete,
+} from '../db/profileStore.js';
 
 const router = Router();
 router.use(googleRoutes);
@@ -33,6 +38,10 @@ router.post('/complete-profile', (req, res) => {
         res.status(409).json({ error: r.error });
         return;
       }
+    }
+    if (!isServerProfileComplete(p.uid)) {
+      res.status(400).json({ error: 'profile_incomplete' });
+      return;
     }
     markProfileSetupComplete(p.uid);
     const saved = getProfile(p.uid);

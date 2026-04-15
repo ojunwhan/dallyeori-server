@@ -3,6 +3,7 @@ import axios from 'axios';
 import { publicAppOrigin } from './oauthOrigin.js';
 import { signSessionToken } from './session.js';
 import { ensureAuthUser } from './userStore.js';
+import { isServerProfileComplete } from '../db/profileStore.js';
 
 const router = Router();
 
@@ -66,7 +67,7 @@ router.get('/google/callback', async (req, res) => {
     }
     const uidFull = `google:${uid}`;
     const { record } = ensureAuthUser(uidFull);
-    const isNewUser = !record.profileSetupComplete;
+    const isNewUser = !record.profileSetupComplete || !isServerProfileComplete(uidFull);
     console.log('[google auth] dallyeori-only store — isNewUser:', isNewUser, 'uid:', uidFull);
     const jwtToken = signSessionToken({
       uid: uidFull,
