@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import path from 'node:path';
 import express from 'express';
+import { UPLOADS_ROOT, UPLOADS_AVATARS_DIR } from './paths.js';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -71,8 +71,14 @@ app.use(
 );
 app.use(express.json());
 
+try {
+  fs.mkdirSync(UPLOADS_AVATARS_DIR, { recursive: true });
+} catch (e) {
+  console.warn('[dallyeori-server] uploads/avatars mkdir', e);
+}
+
 /*
- * Express로 /uploads → process.cwd()/uploads 정적 서빙 (아바타 등).
+ * Express로 /uploads → UPLOADS_ROOT 정적 서빙 (아바타 등).
  * nginx만 쓸 때는 동일 경로를 alias로 넘겨도 되고, 이 미들웨어는 그대로 두어도 됩니다.
  *   location /uploads/ {
  *     alias /home/ubuntu/dallyeori-server/uploads/;

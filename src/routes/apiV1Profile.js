@@ -10,9 +10,7 @@ import {
   isServerProfileComplete,
   updateProfileAvatarPhoto,
 } from '../db/profileStore.js';
-
-/** 업로드 디렉터리: 프로세스 cwd 기준 dallyeori-server/uploads/avatars/ */
-const AVATAR_DIR = path.join(process.cwd(), 'uploads', 'avatars');
+import { UPLOADS_AVATARS_DIR as AVATAR_DIR } from '../paths.js';
 
 /**
  * 이전에 서버에 저장된 아바타 파일만 삭제 (OAuth URL 등은 무시)
