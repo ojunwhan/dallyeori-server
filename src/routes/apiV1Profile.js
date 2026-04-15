@@ -1,11 +1,64 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router } from 'express';
+import multer from 'multer';
 import { verifySessionToken } from '../auth/session.js';
 import { ensureAuthUser } from '../auth/userStore.js';
 import {
   getProfile,
   profileToPublicV1,
   isServerProfileComplete,
+  updateProfileAvatarPhoto,
 } from '../db/profileStore.js';
+
+/** 업로드 디렉터리: 프로세스 cwd 기준 dallyeori-server/uploads/avatars/ */
+const AVATAR_DIR = path.join(process.cwd(), 'uploads', 'avatars');
+
+/**
+ * 이전에 서버에 저장된 아바타 파일만 삭제 (OAuth URL 등은 무시)
+ * @param {string} oldPhotoURL
+ */
+function safeUnlinkOldServerAvatar(oldPhotoURL) {
+  if (typeof oldPhotoURL !== 'string' || !oldPhotoURL.startsWith('/uploads/avatars/')) return;
+  const base = path.basename(oldPhotoURL);
+  if (!/^[\w.-]+$/.test(base)) return;
+  const full = path.join(AVATAR_DIR, base);
+  try {
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @param {string} mime */
+function extFromMimetype(mime) {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+const avatarStorage = multer.diskStorage({
+  destination(_req, _file, cb) {
+    fs.mkdirSync(AVATAR_DIR, { recursive: true });
+    cb(null, AVATAR_DIR);
+  },
+  filename(req, file, cb) {
+    const uid = String(req.authUser?.uid ?? 'user').replace(/[^\w-]/g, '') || 'user';
+    const mime = typeof file.mimetype === 'string' ? file.mimetype : '';
+    const ext = extFromMimetype(mime);
+    cb(null, `${uid}_${Date.now()}.${ext}`);
+  },
+});
+
+const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
+    if (ok) cb(null, true);
+    else cb(new Error('bad_file_type'));
+  },
+});
 
 const router = Router();
 
@@ -34,6 +87,69 @@ function requireUserJwt(req, res, next) {
 }
 
 /** 반드시 /profile/:uid 보다 먼저 등록 (me가 :uid에 매칭되지 않도록) */
+router.post(
+  '/profile/avatar',
+  requireUserJwt,
+  (req, res, next) => {
+    uploadAvatar.single('avatar')(req, res, (err) => {
+      if (err) {
+        if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+          res.status(400).json({ error: 'file_too_large' });
+          return;
+        }
+        if (String(err?.message) === 'bad_file_type') {
+          res.status(400).json({ error: 'bad_file_type' });
+          return;
+        }
+        res.status(400).json({ error: 'upload_failed' });
+        return;
+      }
+      next();
+    });
+  },
+  (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: 'avatar_required' });
+        return;
+      }
+      const uid = req.authUser.uid;
+      const existing = getProfile(uid);
+      if (!existing) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          /* ignore */
+        }
+        res.status(404).json({ error: 'no_profile' });
+        return;
+      }
+      const oldUrl = existing.photoURL || '';
+      const photoURL = `/uploads/avatars/${req.file.filename}`;
+      const n = updateProfileAvatarPhoto(uid, photoURL);
+      if (n === 0) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          /* ignore */
+        }
+        res.status(404).json({ error: 'no_profile' });
+        return;
+      }
+      safeUnlinkOldServerAvatar(oldUrl);
+      res.json({ ok: true, photoURL });
+    } catch (e) {
+      console.warn('[api/v1/profile/avatar]', e);
+      try {
+        if (req.file?.path) fs.unlinkSync(req.file.path);
+      } catch {
+        /* ignore */
+      }
+      res.status(500).json({ error: 'server_error' });
+    }
+  },
+);
+
 router.get('/profile/me', requireUserJwt, (req, res) => {
   try {
     const uid = req.authUser.uid;

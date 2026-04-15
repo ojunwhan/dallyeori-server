@@ -144,6 +144,23 @@ export function updateLastSeen(uid) {
 }
 
 /**
+ * 업로드 아바타 URL만 갱신 (행 없으면 0 변경)
+ * @param {string} uid
+ * @param {string} photoURL
+ * @returns {number} 변경 행 수
+ */
+export function updateProfileAvatarPhoto(uid, photoURL) {
+  if (!uid || typeof uid !== 'string' || typeof photoURL !== 'string' || !photoURL.trim()) return 0;
+  const db = getDb();
+  const r = db
+    .prepare(
+      `UPDATE user_profiles SET photoURL = @photoURL, updatedAt = datetime('now') WHERE uid = @uid`,
+    )
+    .run({ uid, photoURL: photoURL.trim() });
+  return r.changes;
+}
+
+/**
  * @param {string} uid
  * @returns {{ uid: string, nickname: string | null, photoURL: string, language: string, selectedDuckId: string, countryCode: string, gender: string | null, bio: string | null, createdAt: string, updatedAt: string, lastSeenAt: string | null } | null}
  */
