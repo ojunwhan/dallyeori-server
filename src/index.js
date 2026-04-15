@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
@@ -71,15 +72,13 @@ app.use(
 app.use(express.json());
 
 /*
- * 정적 아바타: /uploads/avatars/... (multer 저장 경로 = process.cwd()/uploads/avatars/)
- *
- * 프로덕션에서 nginx가 정적 파일을 직접 줄 때는 예시처럼 alias 하면 됩니다.
+ * Express로 /uploads → process.cwd()/uploads 정적 서빙 (아바타 등).
+ * nginx만 쓸 때는 동일 경로를 alias로 넘겨도 되고, 이 미들웨어는 그대로 두어도 됩니다.
  *   location /uploads/ {
  *     alias /home/ubuntu/dallyeori-server/uploads/;
  *   }
- * (끝 슬래시: location /uploads/ ... 와 디렉터리 경로 끝 슬래시 규칙에 맞게 조정)
  */
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', express.static(UPLOADS_ROOT));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/v1', apiV1ProfileRouter);

@@ -92,19 +92,33 @@ router.post(
   requireUserJwt,
   (req, res, next) => {
     uploadAvatar.single('avatar')(req, res, (err) => {
-      if (err) {
-        if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      if (!err) {
+        next();
+        return;
+      }
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
           res.status(400).json({ error: 'file_too_large' });
           return;
         }
-        if (String(err?.message) === 'bad_file_type') {
-          res.status(400).json({ error: 'bad_file_type' });
+        if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+          res.status(400).json({ error: 'avatar_required' });
           return;
         }
-        res.status(400).json({ error: 'upload_failed' });
+        if (err.code === 'LIMIT_PART_COUNT' || err.code === 'LIMIT_FIELD_KEY') {
+          res.status(400).json({ error: 'upload_failed' });
+          return;
+        }
+        console.warn('[api/v1/profile/avatar] multer', err.code, err.message);
+        res.status(400).json({ error: 'upload_failed', code: err.code });
         return;
       }
-      next();
+      if (String(err?.message) === 'bad_file_type') {
+        res.status(400).json({ error: 'bad_file_type' });
+        return;
+      }
+      console.warn('[api/v1/profile/avatar]', err);
+      res.status(400).json({ error: 'upload_failed' });
     });
   },
   (req, res) => {
