@@ -151,8 +151,7 @@ export function getProfile(uid) {
   const r = db.prepare(`SELECT * FROM user_profiles WHERE uid = ?`).get(uid);
   if (!r) return null;
   const genderRaw = r.gender != null ? String(r.gender).trim().toUpperCase() : '';
-  const gender =
-    genderRaw === 'M' || genderRaw === 'F' || genderRaw === 'X' ? genderRaw : null;
+  const gender = genderRaw === 'M' || genderRaw === 'F' ? genderRaw : null;
   const countryRaw = r.country_code != null ? String(r.country_code).trim().toUpperCase() : '';
   const countryCode = countryRaw === '' ? '' : countryRaw.length === 2 ? countryRaw : '';
   return {
