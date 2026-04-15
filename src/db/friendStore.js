@@ -91,7 +91,7 @@ export function searchUsersDiscovery(meUid, params) {
     args.push(q);
   }
   if (countryCode && /^[A-Z]{2}$/.test(countryCode)) {
-    sql += ` AND upper(trim(country_code)) = ?`;
+    sql += ` AND UPPER(country_code) = UPPER(?)`;
     args.push(countryCode);
   }
   if (gender === 'M' || gender === 'F') {
