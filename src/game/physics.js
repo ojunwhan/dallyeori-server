@@ -3,7 +3,7 @@
  */
 
 export const TRACK_DISTANCE_M = 70;
-export const RACE_TIME_LIMIT_SEC = 13;
+export const RACE_TIME_LIMIT_SEC = 14;
 /** 클라 constants.TAP_STRIDE_M(60cm) 과 동일 — 탭 1회 = 전진 1보, 속도 적분 없음 */
 export const TAP_STRIDE_M = 0.6;
 

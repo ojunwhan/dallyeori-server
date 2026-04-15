@@ -1,6 +1,5 @@
 import {
   RACE_TIME_LIMIT_SEC,
-  TRACK_DISTANCE_M,
   applyTap,
   createDuck,
   duckToWire,
@@ -392,16 +391,6 @@ export class RaceRoom {
     }
     stepDuck(this.ducks[0], dt, this.terrain, this.raceT, this.botSlot === 0);
     stepDuck(this.ducks[1], dt, this.terrain, this.raceT, this.botSlot === 1);
-    if (this.ducks[0].dist >= TRACK_DISTANCE_M || this.ducks[1].dist >= TRACK_DISTANCE_M) {
-      if (this.ducks[0].dist >= TRACK_DISTANCE_M && this.ducks[1].dist >= TRACK_DISTANCE_M) {
-        this.finish(this.ducks[0].dist >= this.ducks[1].dist ? 0 : 1);
-      } else if (this.ducks[0].dist >= TRACK_DISTANCE_M) {
-        this.finish(0);
-      } else {
-        this.finish(1);
-      }
-      return;
-    }
     if (wallT >= RACE_TIME_LIMIT_SEC) {
       const eps = 1e-5;
       let w = 1;
