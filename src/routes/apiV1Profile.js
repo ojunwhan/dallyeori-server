@@ -32,7 +32,19 @@ function safeUnlinkOldServerAvatar(oldPhotoURL) {
 function extFromMimetype(mime) {
   if (mime === 'image/png') return 'png';
   if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
   return 'jpg';
+}
+
+const AVATAR_ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+
+/**
+ * mime 위조 완화: 클라이언트가 보낸 originalname 확장자 화이트리스트
+ * @param {string} originalname
+ */
+function isAllowedAvatarOriginalExtension(originalname) {
+  const ext = path.extname(typeof originalname === 'string' ? originalname : '').toLowerCase();
+  return AVATAR_ALLOWED_EXT.has(ext);
 }
 
 const avatarStorage = multer.diskStorage({
@@ -52,7 +64,7 @@ const uploadAvatar = multer({
   storage: avatarStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
-    const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
+    const ok = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype);
     if (ok) cb(null, true);
     else cb(new Error('bad_file_type'));
   },
@@ -134,6 +146,16 @@ router.post(
           /* ignore */
         }
         res.status(404).json({ error: 'no_profile' });
+        return;
+      }
+      const origName = typeof req.file.originalname === 'string' ? req.file.originalname : '';
+      if (!isAllowedAvatarOriginalExtension(origName)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          /* ignore */
+        }
+        res.status(400).json({ error: 'invalid_extension' });
         return;
       }
       const oldUrl = existing.photoURL || '';
