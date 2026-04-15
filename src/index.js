@@ -83,6 +83,23 @@ const io = new Server(httpServer, {
 const matchmaker = new Matchmaker(io);
 const qrMatch = new QrMatchManager(io, matchmaker);
 
+/** 친구 대전 신청 대기 — key `senderUid:receiverUid` → 타임아웃 id */
+const PENDING_BATTLE_MS = 15_000;
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const pendingBattleTimers = new Map();
+
+/** @param {string} senderUid @param {string} receiverUid */
+function friendBattlePendingKey(senderUid, receiverUid) {
+  return `${senderUid}:${receiverUid}`;
+}
+
+/** @param {string} key */
+function clearPendingFriendBattle(key) {
+  const t = pendingBattleTimers.get(key);
+  if (t) clearTimeout(t);
+  pendingBattleTimers.delete(key);
+}
+
 /** @type {Map<string, Set<string>>} uid → socket.id (1:N 탭·기기) */
 const uidToSocketIds = new Map();
 
@@ -677,6 +694,123 @@ io.on('connection', (socket) => {
       socket.emit('chatSent', msg);
     } catch (e) {
       console.warn('[sendChat] handler error', e);
+    }
+  });
+
+  socket.on('sendBattleRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const fromUid = socket.data.uid;
+      const targetUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid.trim() : '';
+      if (!fromUid || !targetUid || targetUid === fromUid) return;
+      const receivers = getAllSocketsByUid(targetUid).filter((s) => s.connected);
+      if (receivers.length === 0) {
+        socket.emit('battleRequestFailed', { reason: 'offline', targetUid });
+        return;
+      }
+      const key = friendBattlePendingKey(fromUid, targetUid);
+      clearPendingFriendBattle(key);
+      const tid = setTimeout(() => {
+        clearPendingFriendBattle(key);
+        for (const s of getAllSocketsByUid(fromUid).filter((c) => c.connected)) {
+          s.emit('battleRequestFailed', { reason: 'timeout', targetUid });
+        }
+      }, PENDING_BATTLE_MS);
+      pendingBattleTimers.set(key, tid);
+      const prof = friendRequestSenderProfile(socket);
+      for (const peer of receivers) {
+        peer.emit('battleRequestReceived', {
+          senderUid: fromUid,
+          senderName: prof.nickname,
+        });
+      }
+    } catch (e) {
+      console.warn('[sendBattleRequest] handler error', e);
+    }
+  });
+
+  socket.on('acceptBattleRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const accepterUid = socket.data.uid;
+      const peerUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid.trim() : '';
+      if (!accepterUid || !peerUid || peerUid === accepterUid) return;
+      const key = friendBattlePendingKey(peerUid, accepterUid);
+      if (!pendingBattleTimers.has(key)) {
+        socket.emit('battleRequestFailed', { reason: 'expired', targetUid: peerUid });
+        return;
+      }
+      clearPendingFriendBattle(key);
+      const profRaw =
+        payload && typeof payload === 'object' && payload.profile && typeof payload.profile === 'object'
+          ? /** @type {Record<string, unknown>} */ (payload.profile)
+          : null;
+      if (profRaw) {
+        try {
+          applyClientMatchProfile(socket, profRaw);
+        } catch (e) {
+          console.warn('[acceptBattleRequest] profile merge', e);
+        }
+      }
+      const initiator = pickNewestConnectedSocket(peerUid);
+      if (!initiator) {
+        socket.emit('battleRequestFailed', { reason: 'peer_offline', targetUid: peerUid });
+        return;
+      }
+      const terrain = normalizeTerrainKey('normal');
+      const ok = matchmaker.pairDirectRematch(terrain, initiator, socket);
+      if (!ok) {
+        for (const s of getAllSocketsByUid(peerUid).filter((c) => c.connected)) {
+          s.emit('battleRequestFailed', { reason: 'unavailable', targetUid: accepterUid });
+        }
+        for (const s of getAllSocketsByUid(accepterUid).filter((c) => c.connected)) {
+          s.emit('battleRequestFailed', { reason: 'unavailable', targetUid: peerUid });
+        }
+        return;
+      }
+      for (const s of getAllSocketsByUid(peerUid).filter((c) => c.connected)) {
+        s.emit('battleRequestAccepted', {});
+      }
+      for (const s of getAllSocketsByUid(accepterUid).filter((c) => c.connected)) {
+        s.emit('battleRequestAccepted', {});
+      }
+    } catch (e) {
+      console.warn('[acceptBattleRequest] handler error', e);
+    }
+  });
+
+  socket.on('declineBattleRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const accepterUid = socket.data.uid;
+      const peerUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid.trim() : '';
+      if (!accepterUid || !peerUid || peerUid === accepterUid) return;
+      const key = friendBattlePendingKey(peerUid, accepterUid);
+      if (pendingBattleTimers.has(key)) {
+        clearPendingFriendBattle(key);
+        for (const s of getAllSocketsByUid(peerUid).filter((c) => c.connected)) {
+          s.emit('battleRequestDeclined', { peerUid: accepterUid });
+        }
+      }
+    } catch (e) {
+      console.warn('[declineBattleRequest] handler error', e);
+    }
+  });
+
+  socket.on('cancelBattleRequest', (payload) => {
+    try {
+      if (socket.data.qrGuest) return;
+      const fromUid = socket.data.uid;
+      const targetUid =
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid.trim() : '';
+      if (!fromUid || !targetUid || targetUid === fromUid) return;
+      const key = friendBattlePendingKey(fromUid, targetUid);
+      if (pendingBattleTimers.has(key)) clearPendingFriendBattle(key);
+    } catch (e) {
+      console.warn('[cancelBattleRequest] handler error', e);
     }
   });
 
