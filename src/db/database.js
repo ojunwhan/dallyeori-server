@@ -18,7 +18,7 @@ function runProfileMigrations(db) {
     `ALTER TABLE user_profiles ADD COLUMN country_code TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE user_profiles ADD COLUMN gender TEXT`,
     `ALTER TABLE user_profiles ADD COLUMN bio TEXT`,
-    `ALTER TABLE user_profiles ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+    `ALTER TABLE user_profiles ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of alters) {
     try {
