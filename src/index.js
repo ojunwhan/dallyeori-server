@@ -389,6 +389,16 @@ io.on('connection', (socket) => {
   registerUidSocket(socket.data.uid, socket.id);
   console.log('[socket] uid registered', socket.data.uid, '→', socket.id);
 
+  if (!socket.data.qrGuest) {
+    const restored = qrMatch.rebindHostSocket(socket.data.uid, socket);
+    if (restored?.ok) {
+      socket.emit('qrSessionRestored', {
+        matchCode: restored.matchCode,
+        qrUrl: restored.qrUrl,
+      });
+    }
+  }
+
   if (socket.data.qrGuest) {
     queueMicrotask(() => qrMatch.tryJoinGuest(socket));
   } else {
@@ -441,12 +451,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('cancelMatch', () => {
-    qrMatch.cancelForSocket(socket.id);
+    qrMatch.cancelForSocket(socket.id, true);
     matchmaker.cancel(socket.id);
   });
 
   socket.on('qrMatchCancel', () => {
-    qrMatch.cancelForSocket(socket.id);
+    qrMatch.cancelForSocket(socket.id, true);
   });
 
   socket.on('raceJoin', (payload) => {

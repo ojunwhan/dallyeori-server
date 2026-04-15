@@ -4,6 +4,8 @@ import { normalizeTerrainKey } from './physics.js';
 import { getBalance } from '../db/heartStore.js';
 
 const QR_PENDING_MS = 180_000;
+/** 호스트 앱 전환 등 일시 disconnect 시 pending 유지 (카톡 공유 후 재입장 대비) */
+const HOST_RECONNECT_GRACE_MS = 30_000;
 const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 /** @param {number} len */
@@ -24,7 +26,17 @@ export class QrMatchManager {
   constructor(io, matchmaker) {
     this.io = io;
     this.matchmaker = matchmaker;
-    /** @type {Map<string, { hostSocket: import('socket.io').Socket, hostProfile: object, terrain: string, timeoutId: ReturnType<typeof setTimeout> }>} */
+    /**
+     * @type {Map<string, {
+     *   hostSocket: import('socket.io').Socket,
+     *   hostProfile: object,
+     *   terrain: string,
+     *   timeoutId: ReturnType<typeof setTimeout>,
+     *   disconnectedAt?: number,
+     *   graceTimerId?: ReturnType<typeof setTimeout>,
+     *   guestWaitingSocket?: import('socket.io').Socket,
+     * }>}
+     */
     this.pending = new Map();
   }
 
@@ -91,7 +103,7 @@ export class QrMatchManager {
     const hostSocket = this.findHostSocket(uid, sid);
     if (!hostSocket) return { ok: false, status: 409, error: 'socket_offline' };
 
-    this.cancelForSocket(hostSocket.id);
+    this.cancelForSocket(hostSocket.id, true);
 
     let matchCode = randomMatchCode(8);
     let guard = 0;
@@ -131,24 +143,172 @@ export class QrMatchManager {
   expire(matchCode) {
     const p = this.pending.get(matchCode);
     if (!p) return;
-    this.pending.delete(matchCode);
+    this._removePending(matchCode, p, 'timed_out');
+  }
+
+  /**
+   * @param {string} matchCode
+   * @param {object} p
+   * @param {'timed_out' | 'grace_expired' | 'cancel_immediate' | 'paired'} kind
+   */
+  _removePending(matchCode, p, kind) {
     try {
-      p.hostSocket.emit('qrMatchExpired', { matchCode });
+      clearTimeout(p.timeoutId);
     } catch {
       /* ignore */
     }
-  }
+    try {
+      if (p.graceTimerId) clearTimeout(p.graceTimerId);
+    } catch {
+      /* ignore */
+    }
+    this.pending.delete(matchCode);
 
-  /** @param {string} socketId */
-  cancelForSocket(socketId) {
-    for (const [code, p] of this.pending) {
-      if (p.hostSocket?.id === socketId) {
-        clearTimeout(p.timeoutId);
-        this.pending.delete(code);
-        return true;
+    if (kind === 'timed_out' || kind === 'cancel_immediate') {
+      try {
+        p.hostSocket.emit('qrMatchExpired', { matchCode });
+      } catch {
+        /* ignore */
       }
     }
+
+    if (p.guestWaitingSocket && kind !== 'paired') {
+      try {
+        p.guestWaitingSocket.emit('qrJoinFailed', {
+          reason: kind === 'grace_expired' ? 'host_reconnect_timeout' : 'expired_or_invalid',
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** @param {string} matchCode */
+  _onHostGraceExpired(matchCode) {
+    const p = this.pending.get(matchCode);
+    if (!p || !p.disconnectedAt) return;
+    p.graceTimerId = undefined;
+    this._removePending(matchCode, p, 'grace_expired');
+  }
+
+  /**
+   * 호스트 소켓이 끊긴 pending 에 대해 유예 시작(기본) 또는 즉시 삭제(명시 취소·새 QR 발급).
+   * @param {string} socketId
+   * @param {boolean} [immediate]
+   */
+  cancelForSocket(socketId, immediate = false) {
+    for (const [code, p] of this.pending) {
+      if (p.hostSocket?.id !== socketId) continue;
+      if (immediate) {
+        this._removePending(code, p, 'cancel_immediate');
+        return true;
+      }
+      if (p.disconnectedAt) return true;
+      p.disconnectedAt = Date.now();
+      if (p.graceTimerId) clearTimeout(p.graceTimerId);
+      p.graceTimerId = setTimeout(
+        () => this._onHostGraceExpired(code),
+        HOST_RECONNECT_GRACE_MS,
+      );
+      return true;
+    }
     return false;
+  }
+
+  /**
+   * 같은 uid 로 소켓이 다시 붙었을 때 유예 중인 QR 호스트 소켓을 교체.
+   * @param {string} uid
+   * @param {import('socket.io').Socket} newSocket
+   * @returns {{ ok: true, matchCode: string, qrUrl: string } | null}
+   */
+  rebindHostSocket(uid, newSocket) {
+    if (!newSocket?.data?.uid || newSocket.data.qrGuest) return null;
+    const uidStr = String(uid);
+    if (String(newSocket.data.uid) !== uidStr) return null;
+
+    for (const [matchCode, p] of this.pending) {
+      if (p.hostSocket?.data?.uid !== uidStr) continue;
+      if (!p.disconnectedAt) continue;
+
+      const oldSid = p.hostSocket?.id;
+      p.hostSocket = newSocket;
+      newSocket.data.matchProfile = { ...p.hostProfile };
+      delete p.disconnectedAt;
+      if (p.graceTimerId) {
+        clearTimeout(p.graceTimerId);
+        p.graceTimerId = undefined;
+      }
+      console.log(`[qrMatch] host rebind ${matchCode} ${oldSid}→${newSocket.id}`);
+
+      const guestSock = p.guestWaitingSocket;
+      if (guestSock) {
+        p.guestWaitingSocket = undefined;
+        this._pairGuestWithHost(matchCode, p, guestSock);
+      }
+
+      const shortBase = this.qrShortJoinBaseUrl();
+      return { ok: true, matchCode, qrUrl: `${shortBase}/j/${matchCode}` };
+    }
+    return null;
+  }
+
+  /**
+   * @param {string} matchCode
+   * @param {object} p
+   * @param {import('socket.io').Socket} guestSocket
+   */
+  _pairGuestWithHost(matchCode, p, guestSocket) {
+    const hostBal = getBalance(p.hostSocket.data.uid);
+    if (hostBal.balance < 1) {
+      guestSocket.emit('qrJoinFailed', { reason: 'host_no_hearts' });
+      try {
+        p.hostSocket.emit('matchError', { reason: 'noHearts', balance: hostBal.balance });
+      } catch {
+        /* ignore */
+      }
+      this._removePending(matchCode, p, 'cancel_immediate');
+      return;
+    }
+
+    try {
+      clearTimeout(p.timeoutId);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (p.graceTimerId) clearTimeout(p.graceTimerId);
+    } catch {
+      /* ignore */
+    }
+    this.pending.delete(matchCode);
+
+    const duckId = DUCKS[Math.floor(Math.random() * DUCKS.length)] || 'bori';
+    const guestProfile = {
+      userId: guestSocket.data.uid,
+      nickname: guestSocket.data.displayName || '게스트',
+      photoURL: guestSocket.data.photoURL || '',
+      duckId,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    };
+    guestSocket.data.matchProfile = { ...guestProfile };
+
+    const hostEntry = {
+      socket: p.hostSocket,
+      uid: p.hostSocket.data.uid,
+      profile: p.hostProfile,
+      slot: 0,
+      isBot: false,
+    };
+    const guestEntry = {
+      socket: guestSocket,
+      uid: guestSocket.data.uid,
+      profile: guestProfile,
+      slot: 1,
+      isBot: false,
+    };
+    this.matchmaker.pairQrRoom(p.terrain, hostEntry, guestEntry);
   }
 
   /** @param {import('socket.io').Socket} socket */
@@ -175,40 +335,33 @@ export class QrMatchManager {
       return;
     }
 
-    clearTimeout(p.timeoutId);
-    this.pending.delete(matchCode);
+    if (p.disconnectedAt) {
+      if (p.guestWaitingSocket && p.guestWaitingSocket.id !== socket.id) {
+        socket.emit('qrJoinFailed', { reason: 'room_busy' });
+        return;
+      }
+      p.guestWaitingSocket = socket;
+      socket.emit('qrHostReconnecting', { matchCode });
+      return;
+    }
 
-    const duckId = DUCKS[Math.floor(Math.random() * DUCKS.length)] || 'bori';
-    const guestProfile = {
-      userId: socket.data.uid,
-      nickname: socket.data.displayName || '게스트',
-      photoURL: socket.data.photoURL || '',
-      duckId,
-      wins: 0,
-      losses: 0,
-      draws: 0,
-    };
-    socket.data.matchProfile = { ...guestProfile };
+    this._pairGuestWithHost(matchCode, p, socket);
+  }
 
-    const hostEntry = {
-      socket: p.hostSocket,
-      uid: p.hostSocket.data.uid,
-      profile: p.hostProfile,
-      slot: 0,
-      isBot: false,
-    };
-    const guestEntry = {
-      socket,
-      uid: socket.data.uid,
-      profile: guestProfile,
-      slot: 1,
-      isBot: false,
-    };
-    this.matchmaker.pairQrRoom(p.terrain, hostEntry, guestEntry);
+  /** 대기 중 게스트 소켓이 먼저 끊긴 경우 */
+  _clearGuestWaitingIfSocket(socketId) {
+    for (const [, p] of this.pending) {
+      if (p.guestWaitingSocket?.id === socketId) {
+        p.guestWaitingSocket = undefined;
+        return true;
+      }
+    }
+    return false;
   }
 
   /** @param {import('socket.io').Socket} socket */
   onDisconnect(socket) {
+    this._clearGuestWaitingIfSocket(socket.id);
     this.cancelForSocket(socket.id);
   }
 }
