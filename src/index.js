@@ -5,6 +5,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import authRoutes from './auth/index.js';
 import apiV1ProfileRouter from './routes/apiV1Profile.js';
+import createApiV1SocialRouter from './routes/apiV1Social.js';
 import { getUserStorePath } from './auth/userStore.js';
 import { verifySessionToken, signQrGuestToken } from './auth/session.js';
 import { Matchmaker } from './game/matchmaker.js';
@@ -84,6 +85,18 @@ const qrMatch = new QrMatchManager(io, matchmaker);
 
 /** @type {Map<string, Set<string>>} uid → socket.id (1:N 탭·기기) */
 const uidToSocketIds = new Map();
+
+app.use(
+  '/api/v1',
+  createApiV1SocialRouter(
+    () =>
+      new Set(
+        [...uidToSocketIds.entries()]
+          .filter(([, sockSet]) => sockSet && sockSet.size > 0)
+          .map(([u]) => u),
+      ),
+  ),
+);
 
 /**
  * @param {string} uid

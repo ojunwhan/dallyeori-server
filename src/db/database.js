@@ -90,7 +90,34 @@ export function getDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_nickname ON user_profiles(nickname COLLATE NOCASE);
   `);
   runProfileMigrations(_db);
+  runFriendMigrations(_db);
   return _db;
+}
+
+/**
+ * 친구 요청(검색·요청 API용)
+ * @param {import('better-sqlite3').Database} db
+ */
+function runFriendMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS friends (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requester_uid TEXT NOT NULL,
+      receiver_uid TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_friends_requester_receiver ON friends(requester_uid, receiver_uid);
+    CREATE INDEX IF NOT EXISTS idx_friends_status ON friends(status);
+  `);
+  try {
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_pair_unique ON friends(requester_uid, receiver_uid)`,
+    );
+  } catch (e) {
+    const msg = String(e && typeof e === 'object' && 'message' in e ? e.message : e);
+    console.warn('[db] friends pair unique index:', msg);
+  }
 }
 
 getDb();
