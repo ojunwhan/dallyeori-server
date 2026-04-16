@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { verifySessionToken } from '../auth/session.js';
 import { searchUsersDiscovery, createFriendRequest, getRecentOpponents } from '../db/friendStore.js';
 import { insertRaceResult } from '../db/raceResultStore.js';
+import { listNotificationsForUid, markReadByFrom } from '../friendRequestsJsonStore.js';
 
 /**
  * @param {() => Set<string>} getOnlineUids
@@ -80,6 +81,30 @@ export default function createApiV1SocialRouter(getOnlineUids) {
       res.json(users);
     } catch (e) {
       console.warn('[api/v1/friends/recent-opponents]', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.get('/notifications', requireUserJwt, (req, res) => {
+    try {
+      const me = req.authUser.uid;
+      const { pendingReceived, unreadResults } = listNotificationsForUid(me);
+      res.json({ pendingReceived, unreadResults });
+    } catch (e) {
+      console.warn('[api/v1/notifications]', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.post('/notifications/mark-read', requireUserJwt, (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const raw = body.requestIds;
+      const requestIds = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
+      const n = markReadByFrom(req.authUser.uid, requestIds);
+      res.json({ ok: true, updated: n });
+    } catch (e) {
+      console.warn('[api/v1/notifications/mark-read]', e);
       res.status(500).json({ error: 'server_error' });
     }
   });

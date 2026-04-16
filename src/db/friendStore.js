@@ -210,3 +210,38 @@ export function createFriendRequest(requesterUid, receiverUid) {
   }
   return { ok: true };
 }
+
+/**
+ * 소켓 수락 등 — SQLite friends 행을 accepted 로 맞춤 (requester → receiver 한 행이면 충분, 검색은 양방향)
+ * @param {string} requesterUid
+ * @param {string} receiverUid
+ */
+export function ensureFriendsAcceptedInDb(requesterUid, receiverUid) {
+  const req = typeof requesterUid === 'string' ? requesterUid.trim() : '';
+  const recv = typeof receiverUid === 'string' ? receiverUid.trim() : '';
+  if (!req || !recv || req === recv) return;
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT id, status FROM friends WHERE requester_uid = ? AND receiver_uid = ? LIMIT 1`,
+    )
+    .get(req, recv);
+  if (row) {
+    db.prepare(`UPDATE friends SET status = 'accepted' WHERE id = ?`).run(row.id);
+    return;
+  }
+  try {
+    db.prepare(
+      `INSERT INTO friends (requester_uid, receiver_uid, status) VALUES (?, ?, 'accepted')`,
+    ).run(req, recv);
+  } catch (e) {
+    const code = e && typeof e === 'object' && 'code' in e ? String(/** @type {{ code?: string }} */ (e).code) : '';
+    if (code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      db.prepare(
+        `UPDATE friends SET status = 'accepted' WHERE requester_uid = ? AND receiver_uid = ?`,
+      ).run(req, recv);
+      return;
+    }
+    throw e;
+  }
+}

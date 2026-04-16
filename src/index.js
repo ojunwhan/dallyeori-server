@@ -35,6 +35,13 @@ import {
   searchByNickname,
   updateLastSeen,
 } from './db/profileStore.js';
+import { ensureFriendsAcceptedInDb } from './db/friendStore.js';
+import {
+  getRequestById,
+  insertPendingRequest,
+  markAccepted,
+  markRejected,
+} from './friendRequestsJsonStore.js';
 
 const PORT = Number(process.env.PORT) || 3100;
 
@@ -836,12 +843,29 @@ io.on('connection', (socket) => {
     try {
       if (socket.data.qrGuest) return;
       const targetUid =
-        payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+        payload && typeof payload.targetUid === 'string' ? payload.targetUid.trim() : '';
       const requestId =
-        payload && typeof payload.requestId === 'string' ? payload.requestId : '';
+        payload && typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
       const fromUid = socket.data.uid;
       if (!fromUid || !targetUid || targetUid === fromUid || !requestId) return;
       const prof = friendRequestSenderProfile(socket);
+      const toProf = getProfile(targetUid);
+      const toName =
+        (toProf?.nickname && String(toProf.nickname).trim()) || targetUid;
+      const ins = insertPendingRequest({
+        id: requestId,
+        fromUid,
+        toUid: targetUid,
+        fromName: prof.nickname,
+        toName,
+        createdAt: new Date().toISOString(),
+      });
+      if (!ins.ok) {
+        if (ins.error === 'duplicate_pending' || ins.error === 'id_exists') {
+          return;
+        }
+        console.warn('[sendFriendRequest] persist skip', ins.error);
+      }
       const receivers = getAllSocketsByUid(targetUid).filter((s) => s.connected);
       if (receivers.length === 0) {
         console.warn('[sendFriendRequest] target has no connected socket', targetUid);
@@ -861,15 +885,88 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('acceptFriendRequest', (payload) => {
+  socket.on('acceptFriendRequest', (payload, ack) => {
     try {
-      if (socket.data.qrGuest) return;
+      if (socket.data.qrGuest) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'forbidden' });
+        return;
+      }
       const accepterUid = socket.data.uid;
+      const requestId =
+        payload && typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
       const peerUid =
         payload && typeof payload.peerUid === 'string' ? payload.peerUid.trim() : '';
-      const requestId =
-        payload && typeof payload.requestId === 'string' ? payload.requestId : '';
-      if (!accepterUid || !peerUid || peerUid === accepterUid) return;
+
+      const jsonRec = requestId ? getRequestById(requestId) : null;
+      if (jsonRec && jsonRec.status === 'pending') {
+        if (jsonRec.toUid !== accepterUid) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'forbidden' });
+          return;
+        }
+        const ma = markAccepted(requestId, accepterUid);
+        if (!ma.ok) {
+          if (typeof ack === 'function') ack({ ok: false, error: ma.error });
+          return;
+        }
+        const pe = ma.rec;
+        ensureFriendsAcceptedInDb(pe.fromUid, pe.toUid);
+
+        const senderProf = getProfile(pe.fromUid);
+        const accepterProf = getProfile(accepterUid);
+        const senderSockets = getAllSocketsByUid(pe.fromUid).filter((s) => s.connected);
+        const ss = senderSockets[0];
+
+        const toDisplayName =
+          pe.toName ||
+          accepterProf?.nickname ||
+          (socket.data.displayName && String(socket.data.displayName).trim()) ||
+          accepterUid;
+
+        for (const s of getAllSocketsByUid(pe.fromUid).filter((c) => c.connected)) {
+          s.emit('friendRequestAccepted', {
+            requestId: pe.id,
+            fromUid: pe.fromUid,
+            toUid: pe.toUid,
+            toName: toDisplayName,
+          });
+        }
+
+        const forSender = {
+          peerUid: accepterUid,
+          requestId: pe.id,
+          nickname:
+            accepterProf?.nickname ||
+            (socket.data.displayName && String(socket.data.displayName).trim()) ||
+            '',
+          photoURL: accepterProf?.photoURL || socket.data.photoURL || '',
+          duckId: accepterProf?.selectedDuckId || socket.data.selectedDuckId || 'bori',
+        };
+        const forAccepter = {
+          peerUid: pe.fromUid,
+          requestId: pe.id,
+          nickname:
+            senderProf?.nickname ||
+            (ss?.data?.displayName && String(ss.data.displayName).trim()) ||
+            '',
+          photoURL: senderProf?.photoURL || ss?.data?.photoURL || '',
+          duckId: senderProf?.selectedDuckId || ss?.data?.selectedDuckId || 'bori',
+        };
+
+        const emitToUid = (uid, data) => {
+          for (const s of getAllSocketsByUid(uid).filter((c) => c.connected)) {
+            s.emit('friendAccepted', data);
+          }
+        };
+        emitToUid(pe.fromUid, forSender);
+        emitToUid(accepterUid, forAccepter);
+        if (typeof ack === 'function') ack({ ok: true });
+        return;
+      }
+
+      if (!peerUid || peerUid === accepterUid) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'bad_request' });
+        return;
+      }
 
       const senderProf = getProfile(peerUid);
       const accepterProf = getProfile(accepterUid);
@@ -904,8 +1001,41 @@ io.on('connection', (socket) => {
       };
       emitToUid(peerUid, forSender);
       emitToUid(accepterUid, forAccepter);
+      if (typeof ack === 'function') ack({ ok: true });
     } catch (e) {
       console.warn('[acceptFriendRequest] handler error', e);
+      if (typeof ack === 'function') ack({ ok: false, error: 'server_error' });
+    }
+  });
+
+  socket.on('rejectFriendRequest', (payload, ack) => {
+    try {
+      if (socket.data.qrGuest) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'forbidden' });
+        return;
+      }
+      const rejecterUid = socket.data.uid;
+      const requestId =
+        payload && typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
+      if (!rejecterUid || !requestId) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'bad_request' });
+        return;
+      }
+      const mr = markRejected(requestId, rejecterUid);
+      if (!mr.ok) {
+        if (typeof ack === 'function') ack({ ok: false, error: mr.error });
+        return;
+      }
+      for (const s of getAllSocketsByUid(mr.rec.fromUid).filter((c) => c.connected)) {
+        s.emit('friendRequestRejected', {
+          requestId: mr.rec.id,
+          rejectorName: mr.rec.toName || rejecterUid,
+        });
+      }
+      if (typeof ack === 'function') ack({ ok: true });
+    } catch (e) {
+      console.warn('[rejectFriendRequest] handler error', e);
+      if (typeof ack === 'function') ack({ ok: false, error: 'server_error' });
     }
   });
 
