@@ -586,7 +586,7 @@ io.on('connection', (socket) => {
   /** 경기 엔딩 UI(경기장)에 있을 때만 한판더 수신 가능 */
   socket.on('raceEndingEntered', (payload) => {
     try {
-      if (socket.data.qrGuest) return;
+      // 게스트도 재대전 가능(같은 상대 즉석 재대전은 무료) — 엔딩 진입 표시 허용.
       const roomId =
         payload && typeof payload.roomId === 'string' ? payload.roomId.trim() : '';
       if (!roomId) return;
@@ -1047,7 +1047,7 @@ io.on('connection', (socket) => {
 
   socket.on('sendRematch', (payload) => {
     try {
-      if (socket.data.qrGuest) return;
+      // 게스트도 '한판 더' 요청 가능 (같은 상대 즉석 재대전은 무료; 친구·전적·랜덤매칭은 가입 필요).
       const targetUid =
         payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
       const roomId =
@@ -1102,7 +1102,7 @@ io.on('connection', (socket) => {
 
   socket.on('acceptRematch', (data) => {
     try {
-      if (socket.data.qrGuest) return;
+      // 게스트도 재대전 수락 가능 → pairDirectRematch 로 같은 상대와 새 방 생성.
       const peerUid = data && typeof data.peerUid === 'string' ? data.peerUid : '';
       const accepterUid = socket.data.uid;
       if (!peerUid || peerUid === accepterUid) return;
