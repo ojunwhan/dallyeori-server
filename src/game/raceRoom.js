@@ -254,7 +254,9 @@ export class RaceRoom {
    */
   _startServerCountdown() {
     this._clearCountdownTimers();
-    this.countdownStartedAt = Date.now();
+    // countdownStartedAt·plannedRaceStartAt 은 playerJoined 에서 확정(봇 등 예외 시 여기서 보정)
+    if (this.countdownStartedAt == null) this.countdownStartedAt = Date.now();
+    if (this.plannedRaceStartAt == null) this.plannedRaceStartAt = this.countdownStartedAt + 3250;
     const counts = [3, 2, 1, 0];
     counts.forEach((count, i) => {
       const tid = setTimeout(() => {
@@ -262,6 +264,7 @@ export class RaceRoom {
         this.io.to(this.channel).emit('countdown', {
           count,
           startAt: this.countdownStartedAt,
+          raceStartAt: this.plannedRaceStartAt,
           /** 폰 시계 편차 보정용 — 클라가 (serverNow - Date.now()) 로 오프셋 추정 */
           serverNow: Date.now(),
         });
@@ -289,13 +292,14 @@ export class RaceRoom {
         count: counts[idx],
         sync: true,
         startAt: this.countdownStartedAt,
+        raceStartAt: this.plannedRaceStartAt,
         serverNow: Date.now(),
       });
       return;
     }
     if (this.phase === 'racing') {
-      socket.emit('race-start');
-      socket.emit('raceGo');
+      socket.emit('race-start', { raceStartAt: this.raceStartAt, serverNow: Date.now() });
+      socket.emit('raceGo', { raceStartAt: this.raceStartAt, serverNow: Date.now() });
       const wallT =
         this.raceStartAt != null ? (Date.now() - this.raceStartAt) / 1000 : this.raceT;
       const players = [
@@ -334,7 +338,14 @@ export class RaceRoom {
     if (this.joined.size >= 2 && this.phase === 'wait_join') {
       this.phase = 'pending_start';
       this.pendingStartAt = Date.now();
-      this.io.to(this.channel).emit('race-matched', { roomId: this.roomId });
+      // 출발 절대시각(단일 앵커)을 여기서 확정해 모든 신호에 실어 보낸다 — 두 폰이 같은 시각에 출발
+      this.countdownStartedAt = Date.now();
+      this.plannedRaceStartAt = this.countdownStartedAt + 3250;
+      this.io.to(this.channel).emit('race-matched', {
+        roomId: this.roomId,
+        raceStartAt: this.plannedRaceStartAt,
+        serverNow: Date.now(),
+      });
       this._startServerCountdown();
     }
   }
@@ -370,10 +381,11 @@ export class RaceRoom {
     }
     this._clearCountdownTimers();
     this.phase = 'racing';
-    this.raceStartAt = Date.now();
+    // tick·출발연출을 같은 절대시각 앵커로 통일(플랜된 출발시각). 없으면 현재시각.
+    this.raceStartAt = this.plannedRaceStartAt != null ? this.plannedRaceStartAt : Date.now();
     this.raceT = 0;
-    this.io.to(this.channel).emit('race-start');
-    this.io.to(this.channel).emit('raceGo');
+    this.io.to(this.channel).emit('race-start', { raceStartAt: this.raceStartAt, serverNow: Date.now() });
+    this.io.to(this.channel).emit('raceGo', { raceStartAt: this.raceStartAt, serverNow: Date.now() });
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
   }
 
