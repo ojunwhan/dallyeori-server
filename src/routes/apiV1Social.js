@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { verifySessionToken } from '../auth/session.js';
-import { searchUsersDiscovery, createFriendRequest, getRecentOpponents } from '../db/friendStore.js';
+import {
+  searchUsersDiscovery,
+  createFriendRequest,
+  getRecentOpponents,
+  getFriendList,
+} from '../db/friendStore.js';
 import { insertRaceResult } from '../db/raceResultStore.js';
 import { listNotificationsForUid, markReadByFrom } from '../friendRequestsJsonStore.js';
 
@@ -81,6 +86,18 @@ export default function createApiV1SocialRouter(getOnlineUids) {
       res.json(users);
     } catch (e) {
       console.warn('[api/v1/friends/recent-opponents]', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  router.get('/friends/list', requireUserJwt, (req, res) => {
+    try {
+      const me = req.authUser.uid;
+      const online = getOnlineUids();
+      const users = getFriendList(me, online);
+      res.json(users);
+    } catch (e) {
+      console.warn('[api/v1/friends/list]', e);
       res.status(500).json({ error: 'server_error' });
     }
   });

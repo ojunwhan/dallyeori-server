@@ -245,3 +245,47 @@ export function ensureFriendsAcceptedInDb(requesterUid, receiverUid) {
     throw e;
   }
 }
+
+/**
+ * 내 accepted 친구 목록(양방향) + 프로필·온라인 상태
+ * @param {string} meUid
+ * @param {Set<string>} onlineUids
+ * @returns {{ uid: string, nickname: string, language: string, countryCode: string, gender: string | null, profilePhotoURL: string, selectedDuckId: string, isOnline: boolean }[]}
+ */
+export function getFriendList(meUid, onlineUids) {
+  const db = getDb();
+  const me = typeof meUid === 'string' ? meUid.trim() : '';
+  if (!me) return [];
+  const online = onlineUids instanceof Set ? onlineUids : new Set();
+  const rows = db
+    .prepare(
+      `SELECT CASE WHEN requester_uid = ? THEN receiver_uid ELSE requester_uid END AS uid
+       FROM friends WHERE status = 'accepted' AND (requester_uid = ? OR receiver_uid = ?)`,
+    )
+    .all(me, me, me);
+  const seen = new Set();
+  const out = [];
+  for (const r of rows) {
+    const uid = String(r.uid);
+    if (!uid || uid === me || seen.has(uid)) continue;
+    seen.add(uid);
+    const p = getProfile(uid);
+    if (!p) continue;
+    out.push({
+      uid,
+      nickname: p.nickname && String(p.nickname).trim() ? String(p.nickname) : uid,
+      language: String(p.language ?? 'ko'),
+      countryCode: typeof p.countryCode === 'string' ? p.countryCode : '',
+      gender: p.gender === 'M' || p.gender === 'F' ? p.gender : null,
+      profilePhotoURL: String(p.photoURL ?? ''),
+      selectedDuckId: String(p.selectedDuckId ?? 'bori'),
+      isOnline: online.has(uid),
+    });
+  }
+  out.sort((a, b) => {
+    const o = Number(b.isOnline) - Number(a.isOnline);
+    if (o !== 0) return o;
+    return String(a.nickname).localeCompare(String(b.nickname), undefined, { sensitivity: 'base' });
+  });
+  return out;
+}
