@@ -484,6 +484,12 @@ io.on('connection', (socket) => {
     }
   }
 
+  // 클럭 동기화용 왕복 핑 — 클라가 t0를 보내면 서버 수신시각을 즉시 되돌려준다.
+  // 계측(편도지연 실측) + 카운트다운 시각 보정(핑퐁)의 서버측 절반. 순수 additive, 기존 로직 무영향.
+  socket.on('clockPing', (clientT, ack) => {
+    if (typeof ack === 'function') ack({ c: clientT, s: Date.now() });
+  });
+
   socket.on('syncMatchProfile', (payload) => {
     try {
       if (socket.data.qrGuest) return;
